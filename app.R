@@ -491,12 +491,13 @@ plot_trend  <- function(p,pdata,estate,plotlog,totFeature,increaseFeature,fracFe
     forecast = NULL
     for (s in estate){
      index                  = (pdata$state==s)
-     pdata$movingAvg[index] = as.numeric(ma(pdata$increase[index],7))
-     temp                   = calc_forecast(pdata,s,"tot"   ,"increase"   ,"frac",   lookahead,sSocialDist,eSocialDist)
-     temp$state             = s
-     forecast               = rbind(forecast,temp)
-     forecast               = forecast[!is.na(forecast$increase),]}
-    
+     if (sum(index)>0){
+       pdata$movingAvg[index]= as.numeric(ma(pdata$increase[index],7))
+       temp                   = calc_forecast(pdata,s,"tot"   ,"increase"   ,"frac",   lookahead,sSocialDist,eSocialDist)
+       temp$state             = s
+       forecast               = rbind(forecast,temp)
+       forecast               = forecast[!is.na(forecast$increase),]}}
+      
     if (!overlay){forecast$flegend = flegend} else {forecast$flegend = forecast$state}
     if (!overlay){pdata$flegend    = flegend} else{ pdata$flegend    = pdata$state}
     if ( overlay){forecast         = forecast[forecast$rdate>Sys.Date(),]}
