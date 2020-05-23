@@ -7,7 +7,7 @@
 
 #reduce messages on shiny server at startup
 shhh <- suppressPackageStartupMessages 
-shhh(library(curl))
+shhh(library(curl)) #You need to run install.packages("curl") etc once for each library to install
 shhh(library(jsonlite))
 shhh(library(lubridate))
 shhh(library(stringr))
@@ -355,12 +355,22 @@ lm_ln_eqn  <- function(m){
                        r2 = format(summary(m)$r.squared, digits = 3)))
 as.character(as.expression(eq));}
 
-p_annotate <- function(rdates,plotpts,plotlog){
+p_annotate <- function(rdates,plotpts,plotlog,txt="",atmin=FALSE){
   #annotate with value at max date/value
-  maxrdate   =       max(rdates, na.rm = TRUE)
+  #maxrdate   =       max(rdates, na.rm = TRUE)
+  if (!atmin){
   maxplotpts = max(plotpts,na.rm = TRUE)
+  index = plotpts==maxplotpts
+  maxrdate = rdates[index]}
+  else
+  {
+    maxplotpts = min(plotpts,na.rm = TRUE) #I know, its a quick hack
+    index = plotpts==maxplotpts
+    maxrdate = rdates[index]}
+  
+  if (txt == ""){
   txt = round(maxplotpts)
-  txt = format(txt, big.mark=",")  
+  txt = format(txt, big.mark=",")}
   return(annotate("text",x = maxrdate, y = maxplotpts, label = txt, parse=FALSE,vjust=0,hjust=1))}
 
 p_annotate_text <- function(x,y,txt){#annotate with value at max date/value
@@ -472,54 +482,76 @@ plot_trend  <- function(p,pdata,estate,plotlog,totFeature,increaseFeature,fracFe
     pdata$increase = pdata[[increaseFeature]]
     pdata$frac     = pdata[[fracFeature]]
     pdata          = subset(pdata,   grepl(paste(estate,collapse="|"),state) & !is.na(tot) & !is.na(increase)) 
-    if (normalize){
-    pdata$tot      = pdata$tot/pdata$pop*1e6
-    pdata$increase = pdata$increase/pdata$pop*1e6}
     
-    trend_ok      = !(nrow(pdata) == 0)
+    if (normalize) { pdata$tot      = pdata$tot/pdata$pop*1e6     }
+    if (normalize) { pdata$increase = pdata$increase/pdata$pop*1e6}
     
-    thestates = levels(factor(pdata$state))
-    for (s in thestates){
-      index=pdata$state==s
+    if (nrow(pdata) == 0){ return(p) }
+    
+    forecast = NULL
+    for (s in estate){
+     index                  = (pdata$state==s)
      pdata$movingAvg[index] = as.numeric(ma(pdata$increase[index],7))
-    }
-    if ( !trend_ok ){ return(p) }
-    if (!overlay){
-      forecast      = calc_forecast(pdata,estate,"tot"   ,"increase"   ,"frac",   lookahead,sSocialDist,eSocialDist)
-      forecast      = forecast[!is.na(forecast$increase),]}
-      
-    if (!overlay){pdata$flegend = flegend} else{pdata$flegend=pdata$state}
+     temp                   = calc_forecast(pdata,s,"tot"   ,"increase"   ,"frac",   lookahead,sSocialDist,eSocialDist)
+     temp$state             = s
+     forecast               = rbind(forecast,temp)
+     forecast               = forecast[!is.na(forecast$increase),]}
     
-    if(!daily){
-       if (overlay){p = p + geom_line(data=pdata,      mapping=aes(x=rdate,y=tot, colour = flegend))   }else{
-        p = p + geom_point(data=pdata,      mapping=aes(x=rdate,y=tot, colour = flegend))   }
+    if (!overlay){forecast$flegend = flegend} else {forecast$flegend = forecast$state}
+    if (!overlay){pdata$flegend    = flegend} else{ pdata$flegend    = pdata$state}
+    if ( overlay){forecast         = forecast[forecast$rdate>Sys.Date(),]}
+    
+    if(!daily){ #cumulative totals
+       if (overlay){p = p +  geom_line(data = pdata, mapping =aes(x = rdate,y = tot, colour = flegend)) } #show as line in overlay
+            else   {p = p + geom_point(data = pdata, mapping =aes(x = rdate,y = tot, colour = flegend)) }
         
-        p = p + expand_limits(y = max(pdata$tot)*1.05)
-        if (!overlay){
+       p = p + expand_limits(y = max(pdata$tot)*1.05)
+        
+       if (!overlay){
          if ((!is.null(forecast)) & (sum(!is.na(forecast$tot))>0)){
-           p = p + geom_line(data = forecast,mapping = aes(x = rdate,y = tot, colour = flegend)) 
+           p = p + geom_line(data = forecast,mapping = aes(x = rdate,y = tot, colour = flegend),linetype="dashed") 
            p = p + expand_limits(y = max(forecast$tot)*1.05)
            p = p + p_annotate(forecast$rdate, forecast$tot, plotlog)}
-        p = p + p_annotate(pdata$rdate, pdata$tot, plotlog)    }}
-    else
-     { if (!overlay){
+           p = p + p_annotate(pdata$rdate, pdata$tot, plotlog)
+           p = p + p_annotate(forecast$rdate, forecast$tot, plotlog)}
+       else {for (s in estate){index = (pdata$state == s)
+                               p    =  p + p_annotate(pdata$rdate[index],pdata$tot[index],plotlog,s)}}
+           
+       p = p + geom_line(data = forecast,mapping = aes(x = rdate,y = tot, colour = flegend), linetype="dashed") 
+       p = p + expand_limits(y = max(forecast$tot)*1.05)}
+    
+   else #daily plot
+     
+     { p = p + geom_line(data = pdata    , mapping =aes(x = rdate, y = movingAvg, colour = flegend))
+       if (!overlay){
          hforecast= forecast
          lforecast = forecast
          hforecast$increase = hforecast$increase * (1 + assumedError)
-         lforecast$increase = lforecast$increase * assumedError}
-     
-       
-       if(!overlay){p = p + geom_point(data = pdata, mapping=aes(x = rdate,y = increase, colour = flegend))}
-        p = p + geom_line(data = pdata    , mapping =aes(x = rdate, y = movingAvg, colour = flegend))
-       if (!overlay){
-        if (( !is.null(forecast) ) & ( sum( !is.na( forecast$tot ) ) > 0 ) ) {
-          p = p + geom_line(data =  forecast, mapping =aes(x = rdate, y = increase, colour = flegend), linetype="dashed")
-          p = p + geom_line(data = hforecast, mapping =aes(x = rdate, y = increase, colour = flegend),linetype="dotted")
-          p = p + geom_line(data = lforecast, mapping =aes(x = rdate, y = increase, colour = flegend),linetype="dotted")
-        }}}
+         lforecast$increase = lforecast$increase * assumedError
+         p = p + geom_point(data = pdata, mapping=aes(x = rdate,y = increase, colour = flegend))
+         
+         if (( !is.null(forecast) ) & ( sum( !is.na( forecast$tot ) ) > 0 ) ) {
+           p = p + geom_line(data = hforecast, mapping =aes(x = rdate, y = increase, colour = flegend),linetype="dotted")
+           p = p + geom_line(data = lforecast, mapping =aes(x = rdate, y = increase, colour = flegend),linetype="dotted")}}
+         
+      if (( !is.null(forecast) ) & ( sum( !is.na( forecast$tot ) ) > 0 ) ) {
+         p = p + geom_line(data =  forecast, mapping =aes(x = rdate, y = increase, colour = flegend), linetype="dashed")}
+      
+        if (overlay){
+          for (s in estate){
+            index= (pdata$state==s)
+            p= p+p_annotate(pdata$rdate[index],pdata$movingAvg[index],plotlog,s)}}}
+    
+     #General Plot Attributes for both Total and Daily     
+    if (daily)     {ytitle = "Daily Total"} else {ytitle = "Total"}
+    if (overlay)   {ytitle = paste(ytitle,flegend)}
+    if (normalize) { ytitle = paste( ytitle, "(per million)" ) }    
+    if (!overlay){p = p + scale_colour_manual("", breaks = c("Deaths", "Cases", "Hospitalizations", "Est Cases", "Tests"), values = c("red","black", "green","blue", "orange")) }
+     else {estate="" }#no title for overlays for now}
+    p = format_date_plot(p, estate,ytitle, plotlog, sSocialDist, eSocialDist, 0)
     return(p)}
 
-plot_total  <- function(data,estate,plotlog,showcase, showdeath, showtest, showhosp, showest, lookahead,sSocialDist,eSocialDist, normalize, daily=FALSE,overlay=FALSE){
+plot_total  <- function(data,estate,plotlog,showcase, showdeath, showtest, showhosp, showest, lookahead,sSocialDist,eSocialDist, normalize, daily=FALSE,overlay=FALSE) {
   #plot total and daily plots for 1 or more attributes - key routine in program.
   p = ggplot() 
   if (showcase  == 1) {p = plot_trend(p,data,estate,plotlog,"positive",    "positiveIncrease",    "fracPositiveIncrease",    "Cases",            lookahead,sSocialDist,eSocialDist,normalize,daily,overlay)}
@@ -527,13 +559,7 @@ plot_total  <- function(data,estate,plotlog,showcase, showdeath, showtest, showh
   if (showdeath == 1) {p = plot_trend(p,data,estate,plotlog,"death",       "deathIncrease",       "fracDeathIncrease",       "Deaths",           lookahead,sSocialDist,eSocialDist,normalize,daily,overlay)}
   if (showtest == 1)  {p = plot_trend(p,data,estate,plotlog,"test",         "testIncrease",        "fracTestIncrease",       "Tests",            lookahead,sSocialDist,eSocialDist,normalize,daily,overlay)}
   if (showhosp  == 1) {p = plot_trend(p,data,estate,plotlog,"hosp",        "hospIncrease",        "fracHospIncrease",        "Hospitalizations", lookahead,sSocialDist,eSocialDist,normalize,daily,overlay)}
-  if (daily) {ytitle = "Daily Total"} else {ytitle = "Total"}
-  if ( normalize ){ ytitle = paste( ytitle, "(per million)" ) }    
-  if (!overlay){
-  p = p + scale_colour_manual("", breaks = c("Deaths", "Cases", "Hospitalizations", "Est Cases", "Tests"),
-                                  values = c("red",    "black", "green",            "blue", "orange")) }
-  p = format_date_plot(p, estate,ytitle, plotlog, sSocialDist, eSocialDist, 0)
-return(p)}
+  return(p)}
 
 plot_growth_original <- function(p,adata,sSocialDist, eSocialDist,lookahead){ 
   #Add a gray fit to early social distancing performance.
@@ -567,8 +593,7 @@ plot_growth          <- function(focusplot, theTotField,thefracField,sdata,gstat
   #Flattening plots
   sdata$yt = sdata[[theTotField]]
   sdata$yf = sdata[[thefracField]]
-  adata    = subset(sdata,grepl(paste(gstate,collapse="|"),state) & 
-                          (!is.na(yt) & yf>0))
+  adata    = subset(sdata,grepl(paste(gstate,collapse="|"),state) & (!is.na(yt) & yf>0))
   
   if (nrow(adata)==0) {return(plot_unavailable())}
   if (overlay){adata$flegend=adata$state}else{adata$flegend="All"}
@@ -576,62 +601,59 @@ plot_growth          <- function(focusplot, theTotField,thefracField,sdata,gstat
   pdata = adata
   pdata$movingAvg = NA
   
-  thestates = levels(factor(pdata$state))
-  for (s in thestates){
+  for (s in gstate){
     index=  (pdata$state ==  s)
     pdata$movingAvg[index] = as.numeric(ma(pdata$yf[index],7))}
   
   if (overlay) {pdata$flegend=adata$state} else {pdata$flegend="Mov Avg"}
-  
-  p=ggplot()
 
+    p=ggplot()
   if (overlay)
     {ptitle="Comparision of Flattening Rates"
-     p = p + geom_line( pdata,   mapping=aes(x = rdate,y = movingAvg, color = flegend))}
+     p = p + geom_line( pdata,   mapping=aes(x = rdate,y = movingAvg, color = flegend))
+     thestates=levels(factor(pdata$state))
+       for (s in thestates){
+         index= (pdata$state==s)
+         p= p+p_annotate(pdata$rdate[index],pdata$movingAvg[index],plotlog,s,TRUE)}}
   else
-  { sdata   = subset(adata,
+    { sdata   = subset(adata,
                      (rdate >= sSocialDist) &
                      (rdate <= eSocialDist))
-  sdata   = sdata[with(sdata,order(rdate)),]
+     sdata   = sdata[with(sdata,order(rdate)),]
   
-  if (nrow(sdata)==0) {return(plot_unavailable())}
+    if (nrow(sdata)==0) {return(plot_unavailable())}
+    
+    plotit1  = sdata
   
-  plotit1  = sdata
-  
-  if (overlay){plotit1$flegend=plotit1$state} else {plotit1$flegend  = "Fitted"}
+    if (overlay){plotit1$flegend=plotit1$state} else {plotit1$flegend  = "Fitted"}
 
-  fitdata = subset(sdata,(rdate >= sSocialDist) & (rdate<=eSocialDist) & (yf>0))
-  model   = lm(log(yf)~mday, data=fitdata)
+    fitdata = subset(sdata,(rdate >= sSocialDist) & (rdate<=eSocialDist) & (yf>0))
+    model   = lm(log(yf)~mday, data=fitdata)
+    
+    newdays   = data.frame(mday=c((min(sdata$mday)-lookback):(max(sdata$mday)+lookahead  )))
+    newdates  = as.POSIXct(seq(min(sdata$rdate)-days(lookback),max(sdata$rdate)+days(lookahead), by="day"))
+    newgrowth = exp(predict(model,newdays))
   
-  newdays   = data.frame(mday=c((min(sdata$mday)-lookback):(max(sdata$mday)+lookahead  )))
-  newdates  = as.POSIXct(seq(min(sdata$rdate)-days(lookback),max(sdata$rdate)+days(lookahead), by="day"))
-  newgrowth = exp(predict(model,newdays))
+    plotit2   = data.frame(rdate=newdates,mday=newdays,death="NA",yf=newgrowth) 
+    plotit2$flegend ="Fitted"
   
-  plotit2   = data.frame(rdate=newdates,mday=newdays,death="NA",yf=newgrowth) 
-  plotit2$flegend ="Fitted"
+    annodate     = mid_point(plotit2$rdate,.66)
+    annoy        = mid_point(plotit1$yf,.66)
   
-  annodate     = mid_point(plotit2$rdate,.66)
-  annoy        = mid_point(plotit1$yf,.66)
-  
-  p=p + 
-    geom_point( adata,    mapping=aes(x = rdate,y = yf ))+
-    geom_point( plotit1,  mapping=aes(x = rdate,y = yf, color = flegend))+
-    geom_line( pdata,   mapping=aes(x = rdate,y = movingAvg, color = flegend))+
-    geom_line(  plotit2,  mapping=aes(x = rdate,y = yf, color = flegend, ))
-  
-  p = p + annotate("text",x = annodate,y = annoy, label = lm_ln_eqn(model),parse=TRUE)
-  ptitle = paste(gstate," ",round(model$coeff[2]*100,1),'% per day',sep="")
-  p      = plot_growth_original(p,adata,ymd("20200324"),sSocialDist,lookahead)
-  
-  p = format_date_plot(p,ptitle,focusplot, 1,sSocialDist,eSocialDist,1)
-  p = p+ scale_colour_manual("", 
-                             breaks = c("Early Performance", "Fitted", "Data", "Mov Avg"),
-                            values = c("grey",    "red", "black","blue"))
-  }
+    p=p + geom_point( adata,    mapping=aes(x = rdate,y = yf ))+
+          geom_point( plotit1,  mapping=aes(x = rdate,y = yf, color = flegend))+
+          geom_line( pdata,   mapping=aes(x = rdate,y = movingAvg, color = flegend))+
+          geom_line(  plotit2,  mapping=aes(x = rdate,y = yf, color = flegend, ))
+    
+    p = p + annotate("text",x = annodate,y = annoy, label = lm_ln_eqn(model),parse=TRUE)
+    ptitle = paste(gstate," ",round(model$coeff[2]*100,1),'% per day',sep="")
+    p      = plot_growth_original(p,adata,ymd("20200324"),sSocialDist,lookahead)
+    
+    p = format_date_plot(p,ptitle,focusplot, 1,sSocialDist,eSocialDist,1)
+    p = p+ scale_colour_manual("", breaks = c("Early Performance", "Fitted", "Data", "Mov Avg"),values = c("grey",    "red", "black","blue"))}
   
   p = format_date_plot(p,ptitle,focusplot, 1,sSocialDist,eSocialDist,1)
-  return(p)
-} 
+  return(p)} 
 
 #Plot Selection based on UI choices ---- 
 generate_plot <- function(focusplot,input,data,compareState,plotlog,lookahead,sSocialDist,eSocialDist,nStates){
@@ -859,10 +881,10 @@ ui     <- function(request){
         conditionalPanel(condition = "(input.scope =='All')   & ((input.mode == 'Trends') |(input.mode == 'Comparisons'))",  selectInput("region",  'Select Country/State',  rcFun(), selected = "_World" )),
         conditionalPanel(condition = "(input.scope =='World') & ((input.mode == 'Trends') |(input.mode == 'Comparisons'))",  selectInput("country", 'Select Country',        wcFun(), selected = "_France" )),
         conditionalPanel(condition = "(input.scope =='USA')   & ((input.mode == 'Trends') |(input.mode == 'Comparisons'))",  selectInput("state",   'Select State',          scFun(), selected = "MA"     )),
-        conditionalPanel(condition = "(input.scope == 'Custom')",                                                            selectInput("cregion",  'Select Dataset', rcFun(), multiple=TRUE, selected = c("_Ireland","_Belgium","_France","_Germany","MA"))), 
+        conditionalPanel(condition = "(input.scope == 'Custom')",                                                            selectInput("cregion",  'Select Dataset', rcFun(), multiple=TRUE, selected = c("_Ireland","Belgium","_France","MA"))), 
         
-        conditionalPanel(condition = "(input.scope =='All')                             & (input.mode == 'Overlays')", selectInput("mregion", 'Select Dataset', rcFun(), multiple=TRUE, selected = c("_Ireland","_Belgium","_France","_Germany","MA"))),
-        conditionalPanel(condition = "(input.scope =='World')                           & (input.mode == 'Overlays')", selectInput("mcountry", 'Select Dataset', wcFun(), multiple=TRUE, selected = c("_Ireland","_Belgium","_France","_Germany"))), 
+        conditionalPanel(condition = "(input.scope =='All')                             & (input.mode == 'Overlays')", selectInput("mregion", 'Select Dataset', rcFun(), multiple=TRUE, selected = c("_Ireland","Belgium","_France","_Germany","MA"))),
+        conditionalPanel(condition = "(input.scope =='World')                           & (input.mode == 'Overlays')", selectInput("mcountry", 'Select Dataset', wcFun(), multiple=TRUE, selected = c("_Ireland","Belgium","_France","_Germany"))), 
         conditionalPanel(condition = "(input.scope =='USA')                             & (input.mode == 'Overlays')", selectInput("mstate",   'Select Dataset', scFun(), multiple=TRUE, selected = c("MA","CT","NC","TX"))),
         
         conditionalPanel(condition = "(input.scope =='All')   & (input.mode == 'Comparisons')",    selectInput("region2",  'Select comparision',      rcFun(), selected = "_USA" )),
@@ -892,21 +914,28 @@ ui     <- function(request){
                 tags$a(href="https://covid19.jackprior.org/app-jackprior-org/", target="_blank"," *Help* "),
                 tags$a(href="https://covid19.jackprior.org/2020/04/30/what-is-the-social-distance-model-window/"," *Forecasting* "),
                 tags$a(href="https://covid19.jackprior.org/2020/04/04/what-is-the-covid-19-infection-fatality-rate/", " *Estimating Cases* ", target="_blank"),
+                tags$a(href="https://github.com/jjprior/covid19/blob/master/app.R", target="_blank"," *Source Code* "),
       )))}
 
 #Launch Program----------------------------------
-refresh = TRUE
-amerData     = get_amer_data(refresh)
-worldData    = get_world_data(refresh)
-newtonData   = get_newton_data() 
-#Aggregate not working well enough to sub in for intl fee so commented out.  Final sums don't carry forward states without up to date data. 
-#USStates     = region_aggregate(amerData,"_USA2")
-#worldData    = worldData[!(worldData$state == "_USA"),]#replace international usa data with sum of states + some territories. 
-#worldData    = rbind(worldData,USStates)
-world        = region_aggregate(worldData,"_World")
-#these may be interesting in future
-#worldwoChina = region_aggregate(worldData[!worldData$state == "_China",],"_WorldMinusChina")
-#worldwoUSA = region_aggregate(worldData[!worldData$state == "_China",],"_WorldMinusUSA")
-#allData      = rbind(amerData,worldData,newtonData,world,worldwoChina,worldwoUSA)
-allData      = rbind(amerData,worldData,newtonData,world)
+
+refresh = (hour(Sys.time()) < 7) #just grab data and do calculations in early hours.  optimize this later. 
+
+if (refresh) {
+  amerData     = get_amer_data(refresh)
+  worldData    = get_world_data(refresh)
+  newtonData   = get_newton_data() 
+  #Aggregate not working well enough to sub in for intl fee so commented out.  Final sums don't carry forward states without up to date data. 
+  #USStates     = region_aggregate(amerData,"_USA2")
+  #worldData    = worldData[!(worldData$state == "_USA"),]#replace international usa data with sum of states + some territories. 
+  #worldData    = rbind(worldData,USStates)
+  world        = region_aggregate(worldData,"_World")
+  #these may be interesting in future
+  #worldwoChina = region_aggregate(worldData[!worldData$state == "_China",],"_WorldMinusChina")
+  #worldwoUSA = region_aggregate(worldData[!worldData$state == "_China",],"_WorldMinusUSA")
+  #allData      = rbind(amerData,worldData,newtonData,world,worldwoChina,worldwoUSA)
+  allData      = rbind(amerData,worldData,newtonData,world)
+  save(amerData,worldData,allData, file = "alldata.RData")}
+if (!refresh) { load("alldata.RData" )}
+  
 shinyApp(ui = ui, server = server, enableBookmarking = "url")
