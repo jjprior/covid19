@@ -23,6 +23,8 @@ maxforecastdays     = 120 #maximum forward forecasting
 defaultforecastdays = 60  #default forward forecasting
 projectDays         = 21  #Days to project out for ranking case growth rate
 readyBack           = 21  #Days to use in growth projection
+caseRankThreshold   = 1000 #min # of cases to be included in "ALL" rankings
+deathRankThreshold  = 50  #min # of deaths to be included in "ALL" rankings
 
 pp   <- function(p1,p2="",p3="",p4=""){if (debugprint == 1){print(paste(p1,p2,p3,p4))}} #debug printing of 4 values
 
@@ -453,7 +455,7 @@ plot_now_summary    <- function(nowdata, focusplot, plotlog, normalize, sfeature
   nowdata         = nowdata[ (nowdata$rdate > ( Sys.Date() - 8 ) ) & ( nowdata$rdate < Sys.Date() ), ] # limiit to last week 
   nowdata         = nowdata[!is.na(nowdata$feature),]         # limit to non-NA values
   if (sum(grepl("_France",nowdata$state)) > 0){                 # only look at countries with significant amounts of infection documented. 
-    nowdata = nowdata[((nowdata$positive > 600) & (nowdata$death > 100)),] } 
+    nowdata = nowdata[((nowdata$positive > caseRankThreshold) & (nowdata$death > deathRankThreshold)),] } #let ND into international rankings
   if  (grepl("frac|cfr|per|dperh|Pct|pct|Rate",sfeature)|(grepl("Rate",focusplot))) {ispct=1}else{ispct=0}
   if (!ispct & normalize )
   { nowdata$feature = nowdata$feature / as.numeric(nowdata$pop) * 1e6
@@ -955,7 +957,7 @@ ui     <- function(request){
 refresh=TRUE
 try({load("alldata.RData" )
      if (max(allData$rdate)<(Sys.Date()-1)){refresh=TRUE}else{refresh=FALSE}})
-refresh=TRUE
+#refresh=TRUE #uncomment to force data refresh/recalc -- for when calculation code changes
 if (refresh) {
   print("reloading data")
   amerData     = get_amer_data(refresh)
