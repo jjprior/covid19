@@ -16,7 +16,9 @@ shhh(library(scales))
 shhh(library(tidyverse))
 #----set some global values for program-----
 runLocal           = FALSE # interactive at console rather than shiny - use with select all lines run
-forceRefresh       = FALSE #force reload of data from web
+#runLocal           = TRUE # uncomment to run at console with select all lines run
+forceRefresh       = FALSE #Uncomment to force reload of data from web
+#forceRefresh       = TRUE #Uncomment to force reload of data from web
 options(warn = 1, scipen = 999)#no scientific notation in plots
 debugprint          = 1   #set = 1 for pp(txt,var) debug printing
 lookback            = 50  #how far back model show plot model on top of data
@@ -28,7 +30,9 @@ projectDays         = 21  #Days to project out for ranking case growth rate
 caseRankThreshold   = 500 #min # of cases to be included in "ALL" rankings
 deathRankThreshold  = 50  #min # of deaths to be included in "ALL" rankings
 perCapitaDeathRankThreshold = 25  #poorly behaved regressions on very low death rates 
-nHotspots = 7 # number of hot spots in drop down. 
+nHotspots = 4 # number of hot spots in drop down. 
+refState    = "MA"
+refCountry = "_USA"
 
 pp   <- function(p1,p2="",p3="",p4=""){if (debugprint == 1){print(paste(p1,p2,p3,p4))}} #debug printing of 4 values
 
@@ -48,7 +52,7 @@ get_world_data    = function(refreshData=TRUE){
   x$death      = NA
   x            = select(x,rdate,pop,state,positive,positiveIncrease,death,deathIncrease) #thin down to needed data
   x            = x[order(x$rdate),]
-  states       = levels(factor(x$state))
+  states       = unique(x$state)
   for (s in states){   #calculate cumulative counts for cases and deaths
     index = (x$state == s)
     x$positive[index]  = cumsum(x$positiveIncrease[index])  
@@ -89,8 +93,13 @@ get_amer_data     <- function(refreshData=TRUE){
   
   data$test[data$state=="PR"]  = NA
   
+  #Mass hospitilzation data is bogus from x to 4/22 -- fix this someday. 
+  #index= ((data$state=="MA") & (data$rdate>ymd("20200407")) & (data$rdate< ymd("20200422") ))
+  #data$hosp[index]=NA
+  #data$hospIncrease[index]=NA
+  
   data        = data[order(data$rdate),]
-  states = levels(factor(data$state))
+  states = unique(data$state)
   data$pop           = NA  #initialize population column
   data$testIncrease  = NA
   for (s in states){  #add population data 
@@ -201,7 +210,7 @@ covid_calc <- function(x){
   x$fracTestIncrease        = NA
   x$mday                    = as.numeric(difftime(x$rdate,Sys.Date(),units=c("days"))) #need to regress against days relative to today. 
   x =  x[with(x,order(rdate)),]  
-  thestates = levels(factor(x$state))  #calculated day over day growth frac (rates) in cases, etc. 
+  thestates = unique(x$state)  #calculated day over day growth frac (rates) in cases, etc. 
   for (s in thestates){
     index= (x$state==s)
     x[index,] = calc_growth_since_last_change(x[index,],"positiveIncrease",    "positive",    "fracPositiveIncrease")
@@ -260,7 +269,7 @@ get_growth       <- function(adata,estate, yffeature, sSocialDist, eSocialDist){
 get_pct_complete <- function(x,  lookahead, sSocialDist, eSocialDist){
   #estimate % complete epidemic for a state - not used yet. 
   x =  x[with(x,order(rdate)),]  
-  thestates = levels(factor(x$state))
+  thestates = unique(x$state)
   for (s in thestates){
     index= (x$state==s) 
     index2 = index & (x$rdate>sSocialDist) & ( x$rdate<eSocialDist) 
@@ -302,6 +311,8 @@ calc_forecast    <- function(data,cstate,totfeaturestr,increasefeaturestr, fracf
                    (data$fracfeature>0) & 
                    (!is.na(data$fracfeature))
   n = sum(index)
+  if (n==0){return(NULL)}
+  
   data = data[index,]
   cgmodel=NULL
   try({cgmodel = lm(log(fracfeature)~mday, data=data)})
@@ -346,7 +357,7 @@ main_title    <- function(s,gr=""){ggtitle(paste(  str_replace( str_replace_all(
 
 p_add_vline      <- function(vdate){geom_vline(aes(xintercept =   as.numeric(as.POSIXct(vdate))))} # add vertical line on date plots
 
-plot_unavailable <- function(){ggplot() + ggtitle("Only Available for some US States")} #for menu choices with no data
+plot_unavailable <- function(){ggplot() + ggtitle("Report Unavailable")} #for menu choices with no data
 
 p_log_scale   <- function(p,plotlog,pct=0){
   #set Y axis as log or not and format accordingly, noting if it is a percent unit
@@ -434,6 +445,7 @@ format_bar_plot  <- function(p, estate, ytitle, plotlog,sSocialDist,eSocialDist,
 plot_feature        <- function(sdata,feature,ftitle,cstate,plotlog,lookahead,sSocialDist,eSocialDist,overlay=FALSE){
   #Plot a feature generically
   sdata$y       = sdata[[feature]]
+  overlay = length(cstate)>1
   if (overlay){sdata$flegend=sdata$state}else{sdata$flegend = feature}
   
   sdata         = subset(sdata, grepl(paste(cstate,collapse="|"),state) & !is.na(y))
@@ -449,23 +461,28 @@ plot_feature        <- function(sdata,feature,ftitle,cstate,plotlog,lookahead,sS
   if (!overlay){p = p+geom_point(sdata, mapping=aes(x=rdate,y=y,color=flegend))}
   
   p = p + geom_line(data = sdata    , mapping =aes(x = rdate, y = movingAvg, colour = flegend))
+
+    for (s in cstate){
+      index= (sdata$state==s)
+      p= p+p_annotate(sdata$rdate[index],sdata$movingAvg[index],plotlog,s)
+    }
+  
   p = format_date_plot(p,cstate,ftitle,plotlog,sSocialDist,eSocialDist,ispct)
   return(p)}
 
-get_hot_spot = function(nowdata){ 
+get_hot_spots = function(nowdata){ 
   sfeature="projectedCaseGrowth"
-  #repurpose code for rankings to get a hot spot list
-  nowdata         = nowdata[!nowdata$state == "_World",]        #leave the aggregated "World" out of rankings. 
+  nowdata         = nowdata[!nowdata$state == "_World",]        #leave the aggregated "World" out 
   nowdata$feature = nowdata[[sfeature]]                       #make the summarized feature accessible.   
   nowdata         = nowdata[ (nowdata$rdate > ( Sys.Date() - 8 ) ) & ( nowdata$rdate < Sys.Date() ), ] # limiit to last week 
   nowdata         = nowdata[!is.na(nowdata$feature),]         # limit to non-NA values
-  nowdata = nowdata[( (nowdata$positive > caseRankThreshold) & 
+  nowdata = nowdata[( (nowdata$positive > caseRankThreshold) & #limit to major regions
                         (nowdata$death > deathRankThreshold)   &
                         ((nowdata$death*1e6/nowdata$pop) > perCapitaDeathRankThreshold)),] 
   nowdata$feature = nowdata$feature 
   nowdata         = nowdata[!is.na(nowdata$feature),]
   nowdata = select(nowdata,c(state,feature))
-  state   = levels(factor(nowdata$state))
+  state   = unique(nowdata$state)
   newdata = data.frame(state)
   states  = state
   if (nrow(nowdata)==0){return(NULL)}
@@ -476,9 +493,8 @@ get_hot_spot = function(nowdata){
     newdata$feature[index2] = mean(nowdata$feature[index1]) } #consider using sum/days
   nowdata = newdata
   nowdata    = nowdata[order(-nowdata$feature),]
-  index = nowdata$state=="Brazil"
-  hotspots = head(nowdata,nHotspots)
-  return(hotspots$state)}
+  hotspots = head(nowdata$state,nHotspots)
+  return(levels(droplevels(hotspots)))}
 
 plot_now_summary    <- function(nowdata, focusplot, plotlog, normalize, sfeature, sSocialDist, eSocialDist, nStates = 40, lookahead = NA ){ 
   #plot ranked bar graphs
@@ -497,7 +513,7 @@ plot_now_summary    <- function(nowdata, focusplot, plotlog, normalize, sfeature
     focusplot = paste(focusplot,("(per million)"))
     ispct = 0 }
   nowdata = select(nowdata,c(state,feature))
-  state   = levels(factor(nowdata$state))
+  state   = unique(nowdata$state)
   newdata = data.frame(state)
   states  = state
   if (nrow(nowdata)==0){return(NULL)}
@@ -541,40 +557,44 @@ plot_trend  <- function(p,pdata,estate,plotlog,totFeature,increaseFeature,fracFe
     
     forecast = NULL
     for (s in estate){
-     index                  = (pdata$state==s)
+     index                  = (pdata$state==s & !is.na(pdata$increase))
+  
      if (sum(index)>0){
        pdata$movingAvg[index]= as.numeric(ma(pdata$increase[index],7))
        temp                   = calc_forecast(pdata,s,"tot"   ,"increase"   ,"frac",   lookahead,sSocialDist,eSocialDist)
        temp$state             = s
-       forecast               = rbind(forecast,temp)
+       try({forecast               = rbind(forecast,temp)})
        forecast               = forecast[!is.na(forecast$increase),]}}
-      
+    
+    if (!is.null(forecast) & !length(forecast)==0)  {
     if (!overlay){forecast$flegend = flegend} else {forecast$flegend = forecast$state}
     if (!overlay){pdata$flegend    = flegend} else{ pdata$flegend    = pdata$state}
-    if ( overlay){forecast         = forecast[forecast$rdate>Sys.Date(),]}
-    
+    if ( overlay){forecast         = forecast[forecast$rdate>=(Sys.Date()-3),]}
+    }
+    madata = pdata[!is.na(pdata$movingAvg),]
     if(!daily){ #cumulative totals
        if (overlay){p = p +  geom_line(data = pdata, mapping =aes(x = rdate,y = tot, colour = flegend)) } #show as line in overlay
             else   {p = p + geom_point(data = pdata, mapping =aes(x = rdate,y = tot, colour = flegend)) }
         
        p = p + expand_limits(y = max(pdata$tot)*1.05)
         
+       if ((!is.null(forecast)) & (length(forecast)>0)){
        if (!overlay){
-         if ((!is.null(forecast)) & (sum(!is.na(forecast$tot))>0)){
            p = p + geom_line(data = forecast,mapping = aes(x = rdate,y = tot, colour = flegend),linetype="dashed") 
            p = p + expand_limits(y = max(forecast$tot)*1.05)
-           p = p + p_annotate(forecast$rdate, forecast$tot, plotlog)}
            p = p + p_annotate(pdata$rdate, pdata$tot, plotlog)
            p = p + p_annotate(forecast$rdate, forecast$tot, plotlog)}
-       else {for (s in estate){index = (forecast$state == s)
-                               p    =  p + p_annotate(forecast$rdate[index],forecast$tot[index],plotlog,s)}}
-           
+       else {
+          for (s in estate){
+            index = (forecast$state == s)
+            p =  p + p_annotate(forecast$rdate[index],forecast$tot[index],plotlog,s)}
+         }
        p = p + geom_line(data = forecast,mapping = aes(x = rdate,y = tot, colour = flegend), linetype="dashed") 
-       p = p + expand_limits(y = max(forecast$tot)*1.05)}
+       p = p + expand_limits(y = max(forecast$tot)*1.05)}}
     
    else #daily plot
-     
-     { p = p + geom_line(data = pdata    , mapping =aes(x = rdate, y = movingAvg, colour = flegend))
+      
+     { p = p + geom_line(data = madata    , mapping =aes(x = rdate, y = movingAvg, colour = flegend))
        if (!overlay){
          hforecast= forecast
          lforecast = forecast
@@ -594,7 +614,7 @@ plot_trend  <- function(p,pdata,estate,plotlog,totFeature,increaseFeature,fracFe
             index= (pdata$state==s)
             p= p+p_annotate(pdata$rdate[index],pdata$movingAvg[index],plotlog,s)
             index= (forecast$state==s)
-            p= p+p_annotate(forecast$rdate[index],forecast$increase[index],plotlog,s)
+            p= p+p_annotate(tail(forecast$rdate[index],1),tail(forecast$increase[index],1),plotlog,s)
             }}}
     
      #General Plot Attributes for both Total and Daily     
@@ -663,10 +683,11 @@ plot_growth          <- function(focusplot, theTotField,thefracField,sdata,gstat
   if (overlay) {pdata$flegend=adata$state} else {pdata$flegend="Mov Avg"}
 
     p=ggplot()
+    madata = pdata[!is.na(pdata$movingAvg),]
   if (overlay)
     {ptitle="Comparision of Flattening Rates"
-     p = p + geom_line( pdata,   mapping=aes(x = rdate,y = movingAvg, color = flegend))
-     thestates=levels(factor(pdata$state))
+     p = p + geom_line( madata,   mapping=aes(x = rdate,y = movingAvg, color = flegend))
+     thestates=unique(pdata$state)
        for (s in thestates){
          index= (pdata$state==s)
          p= p+p_annotate(pdata$rdate[index],pdata$movingAvg[index],plotlog,s,TRUE)}}
@@ -717,31 +738,33 @@ generate_plot <- function(focusplot,input,data,compareState,plotlog,lookahead,sS
   lookahead = as.integer(input$look-eSocialDist)
  
   if (!compareState){
+    if (!input$hotspots){
       if ((input$scope == "All")   ) {estate = input$region}     
       if (input$scope  == "Custom" ) {estate = input$cregion}
       if ((input$scope == "World") ) {estate = input$country}   
-      if ((input$scope == "USA")   ) {estate = input$state}
-      if ((input$scope == "Hot")   ) {estate = input$hregion}
-      if ((input$scope == "Hot World")   ) {estate = input$hcountry}
-      if ((input$scope == "Hot US") ) {estate = input$hstate}}
+      if ((input$scope == "USA")   ) {estate = input$state}}
+    else {    
+      if ((input$scope == "All")   ) {estate = input$hregion}
+      if (input$scope  == "Custom" ) {estate = input$cregion}
+      if ((input$scope == "World")   ) {estate = input$hcountry}
+      if ((input$scope == "USA") ) {estate = input$hstate}}}
     else{
-     if  (input$scope == "All")    {estate=input$region2} 
+      if  (input$scope == "All")    {estate=input$region2} 
       if (input$scope == "Custom") {estate=input$cregion2}
       if (input$scope == "World")  {estate=input$country2}
-      if (input$scope == "Hot")    {estate=input$hregion2}
-      if (input$scope == "Hot US")  {estate=input$hstate2}
-      if (input$scope == "Hot World")  {estate=input$hcountry2}  
       if (input$scope == "USA")    {estate=input$state2}}
-  
+      
   if (length(estate)>1){overlay=TRUE}else{overlay=FALSE}
   
   if (input$scope == "Custom")  {data = allData[grepl(paste(estate,collapse = "|"),allData$state),]}
-  if (input$scope == "All")     {data = allData } #Choose the data to use 
-  if (input$scope == "USA")     {data = amerData}
-  if (input$scope == "World")   {data = worldData}
-  if (input$scope == "Hot")     {data = allData}
-  if (input$scope == "Hot US")     {data = amerData}
-  if (input$scope == "Hot World")     {data = worldData}
+  if (!input$hotspots){
+   if (input$scope == "All")     {data = allData } #Choose the data to use 
+   if (input$scope == "USA")     {data = amerData}
+   if (input$scope == "World")   {data = worldData}}
+  else
+   {if (input$scope == "All")     {data = allData}
+    if (input$scope == "USA")     {data = amerData}
+    if (input$scope == "World")     {data = worldData}}
   
   if (input$march1){data=data[data$rdate>=ymd("20200315"),]}
   
@@ -751,6 +774,7 @@ generate_plot <- function(focusplot,input,data,compareState,plotlog,lookahead,sS
   if (input$log)  {plotlog  = 1} else {plotlog  = 0} #changed from 0 1 boolean in interface late in game
   if (is.null(focusplot)){return(plot_unavailable())}
   
+  if (overlay & (input$feature == "All"))   {return(plot_unavailable())}
   if (focusplot == "NA")                    {return(plot_unavailable())}
   daily=FALSE
   if (focusplot == "Total Tests")           {return(plot_total(data,estate,plotlog,0,0,1      , showhosp,showest,lookahead,sSocialDist,eSocialDist,normalize,daily,overlay))}
@@ -859,6 +883,7 @@ namePlot      <- function(input){
 
 identify_plot <- function(input,n){
   #pick plot based on UI choices
+   
     focusplot ="NA"
     focusplot2="NA"
     focusplot3="NA"
@@ -941,39 +966,40 @@ server <- function(input, output, session){
 
 ui     <- function(request){
   #User interface
-  scFun =  function(){levels(factor(amerData$state))}
-  wcFun =  function(){levels(factor(worldData$state))}
-  ccFun =  function(){levels(factor(customData$state))}
-  rcFun =  function(){levels(factor(allData$state))}
+  scFun =  function(){unique(amerData$state)}
+  wcFun =  function(){unique(worldData$state)}
+  ccFun =  function(){unique(customData$state)}
+  rcFun =  function(){unique(allData$state)}
   fluidPage(
     titlePanel("Covid-19 Data & Forecasts"),
     sidebarLayout(
       sidebarPanel(
-        bookmarkButton(label="Share",inline=TRUE), tags$a(href="http://app.jackprior.org", "RESET"),
+        bookmarkButton(label="Share",inline=TRUE), 
+        #tags$a(href="http://app.jackprior.org", "RESET"),
+        tags$a(href="", "RESET"),tags$a(href="https://covid19.jackprior.org/app-jackprior-org/", target="_blank","HELP"),
         radioButtons("mode",  "Which Analysis?", c("Trends","Comparisons","Rankings"), selected = c("Trends"), inline=TRUE),
-        radioButtons("scope", "Where to Look?",  c("All","World","USA","Hot","Hot World","Hot US", "Custom"),                  selected = "All",      inline=TRUE),
-        conditionalPanel(condition = "(input.scope =='All')      & ((input.mode == 'Trends') |(input.mode == 'Comparisons'))", selectInput("region",  'Select Countries/States', rcFun(), multiple=TRUE, selected = "_World")),
-        conditionalPanel(condition = "(input.scope =='World')    & ((input.mode == 'Trends') |(input.mode == 'Comparisons'))", selectInput("country", 'Select Countries',        wcFun(), multiple=TRUE, selected = "_France" )),
-        conditionalPanel(condition = "(input.scope =='USA')      & ((input.mode == 'Trends') |(input.mode == 'Comparisons'))", selectInput("state",   'Select States',           scFun(), multiple=TRUE, selected = "MA"     )),
-        conditionalPanel(condition = "(input.scope =='Hot')      & ((input.mode == 'Trends') |(input.mode == 'Comparisons'))", selectInput("hregion", 'Hot Spots (RESET to reset)',        rcFun(), multiple=TRUE, selected=get_hot_spot(allData) )),
-        conditionalPanel(condition = "(input.scope =='Hot World')& ((input.mode == 'Trends') |(input.mode == 'Comparisons'))", selectInput("hcountry",'Hot Spots (RESET to reset)',        wcFun(), multiple=TRUE, selected=get_hot_spot(worldData) )),
-        conditionalPanel(condition = "(input.scope =='Hot US')   & ((input.mode == 'Trends') |(input.mode == 'Comparisons'))", selectInput("hstate",  'Hot Spots (RESET to reset)',        scFun(), multiple=TRUE, selected=get_hot_spot(amerData) )),
-        conditionalPanel(condition = "(input.scope == 'Custom')",                                                              selectInput("cregion",  'Select Dataset',         rcFun(), multiple=TRUE, selected = c("_Ireland","Belgium","_France","MA"))), 
+        radioButtons("scope", "Where to Look?",  c("World","USA", "All", "Custom"),                  selected = "USA",      inline=TRUE),
+        checkboxInput("hotspots",    "Focus on Hot Spots", TRUE),
+        conditionalPanel(condition = "(input.scope =='All') &   (!input.hotspots)   & ((input.mode == 'Trends') |(input.mode == 'Comparisons'))", selectInput("region",  'Select Countries/States', rcFun(), multiple=TRUE, selected = "_World")),
+        conditionalPanel(condition = "(input.scope =='World')&  (!input.hotspots)   & ((input.mode == 'Trends') |(input.mode == 'Comparisons'))", selectInput("country", 'Select Countries',        wcFun(), multiple=TRUE, selected = refCountry )),
+        conditionalPanel(condition = "(input.scope =='USA')   & (!input.hotspots)   & ((input.mode == 'Trends') |(input.mode == 'Comparisons'))", selectInput("state",   'Select States',           scFun(), multiple=TRUE, selected = refState )),
         
-        conditionalPanel(condition = "(input.scope =='All')   & (input.mode == 'Comparisons')",    selectInput("region2",  'Select comparision',      rcFun(),  multiple=TRUE, selected = "_USA" )),
-        conditionalPanel(condition = "(input.scope =='World') & (input.mode == 'Comparisons')",    selectInput("country2", 'Select comparison',       wcFun(),  multiple=TRUE, selected = "_USA" )),
-        conditionalPanel(condition = "(input.scope =='USA')   & (input.mode == 'Comparisons')",    selectInput("state2",   'Select comparison',       scFun(),  multiple=TRUE, selected = "CT"   )),
-        conditionalPanel(condition = "(input.scope =='Hot') & (input.mode == 'Comparisons')",      selectInput("hregion2", 'Select comparision',      rcFun(),   multiple=TRUE, selected= "_USA"  )),
-        conditionalPanel(condition = "(input.scope =='Hot') & (input.mode == 'Comparisons')",      selectInput("hcountry2",'Select comparision',      rcFun(),   multiple=TRUE, selected= "_USA"  )),
-        conditionalPanel(condition = "(input.scope =='HotUS') & (input.mode == 'Comparisons')",    selectInput("hstate2", 'Select comparision',       scFun(),   multiple=TRUE, selected= "_USA"  )),
-        conditionalPanel(condition = "(input.scope =='Custom') & (input.mode == 'Comparisons')",   selectInput("cregion2", 'Select comparision',      rcFun(),   multiple=TRUE, selected= "_USA"  )),
+        conditionalPanel(condition = "(input.hotspots & input.scope=='All'   & ((input.mode == 'Trends') |(input.mode == 'Comparisons')))", selectInput("hregion", 'All Hot Spots (Use Reset)',  rcFun(), multiple=TRUE, selected=c(refState,get_hot_spots(allData)))),
+        conditionalPanel(condition = "(input.hotspots & input.scope=='World' & ((input.mode == 'Trends') |(input.mode == 'Comparisons')))", selectInput("hcountry",'World Hot Spots (Use Reset)',wcFun(), multiple=TRUE, selected=c(refCountry,get_hot_spots(worldData)))),
+        conditionalPanel(condition = "(input.hotspots & input.scope=='USA'   & ((input.mode == 'Trends') |(input.mode == 'Comparisons')))", selectInput("hstate",  'US Hot Spots (Use Reset)',     scFun(), multiple=TRUE, selected=c(refState,get_hot_spots(amerData )))),
+        conditionalPanel(condition = "(input.scope == 'Custom')",                                                              selectInput("cregion",  'Select Custom Dataset',         rcFun(), multiple=TRUE, selected = c("_Ireland","Belgium","_France","MA"))), 
         
-        radioButtons("feature", "What Aspect?",   c("Tests", "Cases", "Deaths", "Estimated Cases", "Hospitalizations", "All"), selected = "Cases",inline=TRUE),
-        radioButtons("aspect",  "What Dimension?",c("Total","Daily","Flattening", "Hot", "%Complete", "CFR etc","Marginal","All"),                selected = "Total",inline=TRUE),
+        conditionalPanel(condition = "(input.scope =='All')    & (input.mode == 'Comparisons')",    selectInput("region2",  'Select comparision',      rcFun(),  multiple=TRUE, selected = "_USA" )),
+        conditionalPanel(condition = "(input.scope =='World')  & (input.mode == 'Comparisons')",    selectInput("country2", 'Select comparison',       wcFun(),  multiple=TRUE, selected = "_USA" )),
+        conditionalPanel(condition = "(input.scope =='USA')    & (input.mode == 'Comparisons')",    selectInput("state2",   'Select comparison',       scFun(),  multiple=TRUE, selected = "CT"   )),
+        conditionalPanel(condition = "(input.scope =='Custom') & (input.mode == 'Comparisons')",    selectInput("cregion2", 'Select comparision',      rcFun(),   multiple=TRUE, selected= "MA"  )),
+        
+        radioButtons("feature", "What Aspect?",   c("Cases", "Deaths",  "Estimated Cases", "Tests","Hospitalizations", "All"), selected = "Cases",inline=TRUE),
+        radioButtons("aspect",  "What Dimension?",c("Total","Daily","Flattening", "Hot", "%Complete", "CFR etc","Marginal","All"),                selected = "Daily",inline=TRUE),
         checkboxInput("log",    "Log Scale", FALSE),
         checkboxInput("normalize","Normalize?",value=TRUE),checkboxInput("march1","Start 15Mar?",value=TRUE),
-        sliderInput("look", "What Forecast Horizon?",               min = Sys.Date()+4,              max = Sys.Date()+maxforecastdays, value = floor_date(Sys.Date()+defaultforecastdays,"month")),
-        sliderInput("sdw",  "What Data for Model",       min = Sys.Date()-3*distwindow, max = Sys.Date()-1,                 value = c(as.Date(as.Date(Sys.Date()-distwindow)),as.Date(Sys.Date()-1),round=TRUE,dragRange=FALSE))
+        sliderInput("look", "What Forecast Horizon?",    min = Sys.Date()+4,            max = Sys.Date()+maxforecastdays, value = floor_date(Sys.Date()+defaultforecastdays,"month")),
+        sliderInput("sdw",  "What Data for Model",       min = Sys.Date()-3*distwindow, max = Sys.Date()-1,               value = c(as.Date(as.Date(Sys.Date()-distwindow)),as.Date(Sys.Date()-1),round=TRUE,dragRange=FALSE))
         ),
       mainPanel(
                  conditionalPanel(condition = "(input.aspect !== 'All') & ( input.mode !== 'Comparisons')",  plotOutput("Plot0",height="750px")),
@@ -985,11 +1011,7 @@ ui     <- function(request){
                                   fluidRow(column(6,  plotOutput("Plot2")), column(6,plotOutput("Plot4")))),
                 conditionalPanel(condition = "(input.aspect  == 'All') & (input.feature == 'All')",
                                  fluidRow(column(12,  plotOutput("Plot7"))),
-                                 fluidRow(column(12,  plotOutput("Plot8")))),
-                tags$a(href="https://covid19.jackprior.org/app-jackprior-org/", target="_blank"," *Help* "),
-                tags$a(href="https://covid19.jackprior.org/2020/04/30/what-is-the-social-distance-model-window/"," *Forecasting* "),
-                tags$a(href="https://covid19.jackprior.org/2020/04/04/what-is-the-covid-19-infection-fatality-rate/", " *Estimating Cases* ", target="_blank"),
-                tags$a(href="https://github.com/jjprior/covid19/blob/master/app.R", target="_blank"," *Source Code* "))))}
+                                 fluidRow(column(12,  plotOutput("Plot8")))))))}
 
 #Launch Program----------------------------------
 refresh=TRUE
