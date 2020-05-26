@@ -30,8 +30,8 @@ projectDays         = 21  #Days to project out for ranking case growth rate
 caseRankThreshold   = 500 #min # of cases to be included in "ALL" rankings
 deathRankThreshold  = 50  #min # of deaths to be included in "ALL" rankings
 perCapitaDeathRankThreshold = 25  #poorly behaved regressions on very low death rates 
-nHotspots = 4 # number of hot spots in drop down. 
-refState    = "MA"
+nHotspots = 5 # number of hot spots in drop down. 
+refState    = "NY"
 refCountry = "_USA"
 
 pp   <- function(p1,p2="",p3="",p4=""){if (debugprint == 1){print(paste(p1,p2,p3,p4))}} #debug printing of 4 values
@@ -349,6 +349,7 @@ ma            <- function(x, n = 7){
   if (length(x)==3){x=c(NA, NA,x,NA,NA)}
   if (length(x)==2){x=c(NA, NA,NA,x,NA,NA)}
   if (length(x)==1){x=c(NA, NA,NA,x,NA,NA,NA)}
+  if (length(x)==0) {return(NULL)}
   stats::filter(x, rep(1 / n, n), sides = 2)} #7 day centered moving average
 
 main_caption  <- function(s1,s2){paste(format(Sys.Date(), format = "%d%B") , " app.jackprior.org  - Social Dist. Basis: ",format(s1, format = "%d%b"),"-",format(s2, format = "%d%b"),sep = "")}
@@ -357,7 +358,7 @@ main_title    <- function(s,gr=""){ggtitle(paste(  str_replace( str_replace_all(
 
 p_add_vline      <- function(vdate){geom_vline(aes(xintercept =   as.numeric(as.POSIXct(vdate))))} # add vertical line on date plots
 
-plot_unavailable <- function(){ggplot() + ggtitle("Report Unavailable")} #for menu choices with no data
+plot_unavailable <- function(txt=""){ggplot() + ggtitle(paste("Report unavailable",txt))} #for menu choices with no data
 
 p_log_scale   <- function(p,plotlog,pct=0){
   #set Y axis as log or not and format accordingly, noting if it is a percent unit
@@ -413,7 +414,7 @@ mid_point   <- function(x, ht=0.5){ # place scaled amongst data for annotation.
   return(y)}
 
 format_plot <- function(p, estate, ytitle, plotlog,sSocialDist,eSocialDist,pct=0){
-  # format plots 
+  # format plots generally
   p = p + theme_set(theme_gray(base_size = 16))
   p = p + theme(legend.position = "bottom") 
   p = p + theme(axis.title.x=element_blank()) 
@@ -427,7 +428,6 @@ format_plot <- function(p, estate, ytitle, plotlog,sSocialDist,eSocialDist,pct=0
 format_date_plot <- function(p, estate, ytitle, plotlog,sSocialDist,eSocialDist,pct=0){
   # format plots vs. date
   p = format_plot(p, estate, ytitle, plotlog,sSocialDist,eSocialDist,pct)
-  #p = p + expand_limits(x=as.POSIXct(ymd("20200301")))
   p = p + scale_x_datetime(date_labels = "%d%b", date_breaks = "1 month")
   p = p + ylab(ytitle)
   p = p + theme(axis.title.x = element_text(size = 0)) 
@@ -471,7 +471,7 @@ plot_feature        <- function(sdata,feature,ftitle,cstate,plotlog,lookahead,sS
   return(p)}
 
 get_hot_spots = function(nowdata){ 
-  sfeature="projectedCaseGrowth"
+  sfeature="projectedEstCaseGrowth"
   nowdata         = nowdata[!nowdata$state == "_World",]        #leave the aggregated "World" out 
   nowdata$feature = nowdata[[sfeature]]                       #make the summarized feature accessible.   
   nowdata         = nowdata[ (nowdata$rdate > ( Sys.Date() - 8 ) ) & ( nowdata$rdate < Sys.Date() ), ] # limiit to last week 
@@ -685,7 +685,7 @@ plot_growth          <- function(focusplot, theTotField,thefracField,sdata,gstat
     p=ggplot()
     madata = pdata[!is.na(pdata$movingAvg),]
   if (overlay)
-    {ptitle="Comparision of Flattening Rates"
+    {ptitle="Flattening Rates"
      p = p + geom_line( madata,   mapping=aes(x = rdate,y = movingAvg, color = flegend))
      thestates=unique(pdata$state)
        for (s in thestates){
@@ -721,24 +721,25 @@ plot_growth          <- function(focusplot, theTotField,thefracField,sdata,gstat
     p = p + annotate("text",x = annodate,y = annoy, label = lm_ln_eqn(model),parse=TRUE)
     ptitle = paste(gstate," ",round(model$coeff[2]*100,1),'% per day',sep="")
     p      = plot_growth_original(p,adata,ymd("20200324"),sSocialDist,lookahead)
+    p = p+ scale_colour_manual("", breaks = c("Early Performance", "Fitted", "Data", "Mov Avg"),values = c("grey",    "red", "black","blue"))
+    }
     
-    p = format_date_plot(p,ptitle,focusplot, 1,sSocialDist,eSocialDist,1)
-    p = p+ scale_colour_manual("", breaks = c("Early Performance", "Fitted", "Data", "Mov Avg"),values = c("grey",    "red", "black","blue"))}
-  
-  p = format_date_plot(p,ptitle,focusplot, 1,sSocialDist,eSocialDist,1)
+    #set log of growth plot to be opposite of setting as log is the preferred format. 
+    p = format_date_plot(p,ptitle,focusplot, !plotlog ,sSocialDist,eSocialDist,1)
+    
   return(p)} 
 
 #Plot Selection based on UI choices ---- 
 #identify_plot indentifies report to run and passes to generate_plot
-generate_plot <- function(focusplot,input,data,compareState,plotlog,lookahead,sSocialDist,eSocialDist,nStates){
+generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSocialDist,nStates){
   #takes menu input and chosen report (focusplot) and returns plot object to UI
   sSocialDist  = input$sdw[1]
   eSocialDist  = input$sdw[2]
   normalize    = input$normalize
   lookahead = as.integer(input$look-eSocialDist)
- 
-  if (!compareState){
-    if (!input$hotspots){
+  overlay = FALSE
+  try({
+      if (!input$hotspots){
       if ((input$scope == "All")   ) {estate = input$region}     
       if (input$scope  == "Custom" ) {estate = input$cregion}
       if ((input$scope == "World") ) {estate = input$country}   
@@ -747,16 +748,12 @@ generate_plot <- function(focusplot,input,data,compareState,plotlog,lookahead,sS
       if ((input$scope == "All")   ) {estate = input$hregion}
       if (input$scope  == "Custom" ) {estate = input$cregion}
       if ((input$scope == "World")   ) {estate = input$hcountry}
-      if ((input$scope == "USA") ) {estate = input$hstate}}}
-    else{
-      if  (input$scope == "All")    {estate=input$region2} 
-      if (input$scope == "Custom") {estate=input$cregion2}
-      if (input$scope == "World")  {estate=input$country2}
-      if (input$scope == "USA")    {estate=input$state2}}
+      if ((input$scope == "USA") ) {estate = input$hstate}}
       
   if (length(estate)>1){overlay=TRUE}else{overlay=FALSE}
   
   if (input$scope == "Custom")  {data = allData[grepl(paste(estate,collapse = "|"),allData$state),]}
+      
   if (!input$hotspots){
    if (input$scope == "All")     {data = allData } #Choose the data to use 
    if (input$scope == "USA")     {data = amerData}
@@ -765,6 +762,7 @@ generate_plot <- function(focusplot,input,data,compareState,plotlog,lookahead,sS
    {if (input$scope == "All")     {data = allData}
     if (input$scope == "USA")     {data = amerData}
     if (input$scope == "World")     {data = worldData}}
+  }) #catch bad old hyperlinks
   
   if (input$march1){data=data[data$rdate>=ymd("20200315"),]}
   
@@ -774,7 +772,10 @@ generate_plot <- function(focusplot,input,data,compareState,plotlog,lookahead,sS
   if (input$log)  {plotlog  = 1} else {plotlog  = 0} #changed from 0 1 boolean in interface late in game
   if (is.null(focusplot)){return(plot_unavailable())}
   
-  if (overlay & (input$feature == "All"))   {return(plot_unavailable())}
+  if (input$mode=="Trends"){ if (!input$scope=="USA"){inputfeature=input$feature} else {inputfeature=input$featureUSA} }
+  else                      {if (!input$scope=="USA"){inputfeature=input$featureRanking} else {inputfeature=input$featureRankingUSA}}
+  
+  if (overlay & (inputfeature == "All"))   {return(plot_unavailable("for 'all' aspects for 2+ regions"))}
   if (focusplot == "NA")                    {return(plot_unavailable())}
   daily=FALSE
   if (focusplot == "Total Tests")           {return(plot_total(data,estate,plotlog,0,0,1      , showhosp,showest,lookahead,sSocialDist,eSocialDist,normalize,daily,overlay))}
@@ -785,7 +786,7 @@ generate_plot <- function(focusplot,input,data,compareState,plotlog,lookahead,sS
   if (focusplot == "Total All")             {return(plot_total(data,estate,plotlog,1,1,1,       1       ,1      ,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
   
   if (focusplot == "%Complete Tests")           {return(plot_total(data,estate,plotlog,0,0,1      , showhosp,showest,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
-  if (focusplot == "%Complete Cases")     {return(plot_total(data,estate,plotlog,1,0,showtest, showhosp,showest,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
+  if (focusplot == "%Complete Cases")           {return(plot_total(data,estate,plotlog,1,0,showtest, showhosp,showest,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
   if (focusplot == "%Complete Deaths")          {return(plot_total(data,estate,plotlog,0,1,showtest, showhosp,showest,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
   if (focusplot == "%Complete Est Cases")       {return(plot_total(data,estate,plotlog,0,0,showtest,showhosp,      1,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
   if (focusplot == "%Complete Hospitalizations"){return(plot_total(data,estate,plotlog,0,0,showtest,1        ,showest,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
@@ -862,26 +863,28 @@ generate_plot <- function(focusplot,input,data,compareState,plotlog,lookahead,sS
   if (focusplot == "Growth (/million) Deaths Summary")          {return(plot_now_summary(data,focusplot,plotlog,0,"projectedDeathGrowth",sSocialDist,eSocialDist,nStates) )}
   if (focusplot == "Growth (/million) Hospitalizations Summary"){return(plot_now_summary(data,focusplot,plotlog,0,"projectedHospGrowth",sSocialDist,eSocialDist,nStates) )}
 
-  if (focusplot == "Growth Rate Tests Summary")           {return(plot_now_summary(data,focusplot,plotlog,0,"projectedTestGrowthRate",sSocialDist,eSocialDist,nStates) )}
+  if (focusplot == "Growth Rate Tests Summary")           {return(plot_now_summary(data,focusplot,plotlog,0,"projectedEstGrowthRate",sSocialDist,eSocialDist,nStates) )}
   if (focusplot == "Growth Rate Cases Summary")           {return(plot_now_summary(data,focusplot,plotlog,0,"projectedCaseGrowthRate",sSocialDist,eSocialDist,nStates) )}
   if (focusplot == "Growth Rate Est Cases Summary")       {return(plot_now_summary(data,focusplot,plotlog,0,"projectedEstCaseGrowthRate",sSocialDist,eSocialDist,nStates) )}
   if (focusplot == "Growth Rate Deaths Summary")          {return(plot_now_summary(data,focusplot,plotlog,0,"projectedDeathGrowthRate",sSocialDist,eSocialDist,nStates) )}
   if (focusplot == "Growth Rate Hospitalizations Summary"){return(plot_now_summary(data,focusplot,plotlog,0,"projectedHospGrowthRate",sSocialDist,eSocialDist,nStates) )}
   
-  print(focusplot)
+
   
   return(plot_unavailable())
 }
 
 namePlot      <- function(input){
   #general naming based on inputs
-  pname = paste(input$aspect, input$feature)
+  if (input$mode=="Rankings"){pname = paste(input$aspectRanking, input$featureRanking) }else{ pname = paste(input$aspect, input$feature)}
   pname = str_replace(pname,"Flattening","Growth Rate")
   pname = str_replace(pname,"Hot","Growth (/million)")
   pname = str_replace(pname,"Estimated","Est")
   return(pname)}
 
 identify_plot <- function(input,n){
+  if (input$mode=="Ranking") {aspect       = input$aspectRanking } else { aspect=input$aspect}
+  if (input$mode=="Ranking") {inputfeature = input$fetureRanking } else { inputfeature=input$feature}
   #pick plot based on UI choices
    
     focusplot ="NA"
@@ -889,53 +892,55 @@ identify_plot <- function(input,n){
     focusplot3="NA"
     focusplot4="NA"
     focusplot = namePlot(input) #default nameing
+    
     #ratio reports
     if (input$aspect == "CFR etc"){
-      if (input$feature  == "Tests")            {focusplot = "% Pop Tested" }
-      if (input$feature  == "Cases")            {focusplot = "% Positive" }
-      if (input$feature  == "Estimated Cases")  {focusplot = "IFR Multiplier" }
-      if (input$feature  == "Deaths")           {focusplot = "Case Fatality Rate" }
-      if (input$feature == "Hospitalizations")  {focusplot = "Deaths per Hospitalization"}}
+      if (inputfeature  == "Tests")            {focusplot = "% Pop Tested" }
+      if (inputfeature  == "Cases")            {focusplot = "% Positive" }
+      if (inputfeature  == "Estimated Cases")  {focusplot = "IFR Multiplier" }
+      if (inputfeature  == "Deaths")           {focusplot = "Case Fatality Rate" }
+      if (inputfeature == "Hospitalizations")  {focusplot = "Deaths per Hospitalization"}}
     
-    if (input$aspect == "Marginal"){
-      if (input$feature  == "Tests")            {focusplot = "Marginal % Pop Tested" }
-      if (input$feature  == "Cases")            {focusplot = "Marginal % Positive" }
-      if (input$feature  == "Estimated Cases")  {focusplot = "Marginal IFR Multiplier" }
-      if (input$feature  == "Deaths")           {focusplot = "Marginal Case Fatality Rate" }
-      if (input$feature == "Hospitalizations")  {focusplot = "Marginal Deaths per Hospitalization"}}
+    if (aspect == "Marginal"){
+      if (inputfeature  == "Tests")            {focusplot = "Marginal % Pop Tested" }
+      if (inputfeature  == "Cases")            {focusplot = "Marginal % Positive" }
+      if (inputfeature  == "Estimated Cases")  {focusplot = "Marginal IFR Multiplier" }
+      if (inputfeature  == "Deaths")           {focusplot = "Marginal Case Fatality Rate" }
+      if (inputfeature == "Hospitalizations")  {focusplot = "Marginal Deaths per Hospitalization"}}
         
-    if (input$aspect == "All"){ # All Plots
-      if (input$feature=="Tests")
+    if (aspect == "All"){ # All Plots
+      if (inputfeature=="Tests")
        {focusplot  = "Total Tests" 
         focusplot2 = "Daily Tests"
         focusplot3 = "Growth Rate Tests"
         focusplot4 = "% Pop Tested"} 
-      if (input$feature=="Cases")
+      if (inputfeature=="Cases")
        {focusplot  = "Total Cases" 
         focusplot2 = "Daily Cases"
         focusplot3 = "Growth Rate Cases"
         focusplot4 = "% Positive"}
-      if (input$feature == "Estimated Cases")
+      if (inputfeature == "Estimated Cases")
       {focusplot =  "Total Est Cases" 
         focusplot2 = "Daily Est Cases"
         focusplot3 = "Growth Rate Est Cases"
         focusplot4 = "IFR Multiplier"}
-      if (input$feature == "Deaths")
+      if (inputfeature == "Deaths")
       {focusplot =  "Total Deaths" 
         focusplot2 = "Daily Deaths"
         focusplot3 = "Growth Rate Deaths"
         focusplot4 = "Case Fatality Rate"}
-      if ((input$feature=="Hospitalizations") ) #& (input$scope == "USA")) 
+      if ((inputfeature=="Hospitalizations") ) #& (input$scope == "USA")) 
        {focusplot =  "Total Hospitalizations" 
         focusplot2 = "Daily Hospitalizations"
         focusplot3 = "Growth Rate Hospitalizations"
         focusplot4 = "Deaths per Hospitalization"}
-      if (input$feature=="All"){
-        if (input$aspect == "Total")      {focusplot=   "Total All" }
-        if (input$aspect == "Daily")      {focusplot=   "Daily All"  }
-        if (input$aspect == "Flattening") {focusplot=   "NA" }
-        if (input$aspect == "CFR etc")    {focusplot=   "NA"            }
-        if (input$aspect == "All")        {focusplot=   "Total All"  
+      if (inputfeature=="All"){
+        if (aspect == "Total")      {focusplot=   "Total All" }
+        if (aspect == "Daily")      {focusplot=   "Daily All"  }
+        if (aspect == "Flattening") {focusplot=   "NA" }
+        if (aspect == "CFR etc")    {focusplot=   "NA"            }
+        
+        if (aspect == "All")        {focusplot=   "Total All"  
                                            focusplot2 = "Daily All"  }}} # end if all 
     if (grepl("Rank",input$mode)){
       focusplot =  paste(focusplot, "Summary")
@@ -944,22 +949,15 @@ identify_plot <- function(input,n){
       focusplot4 = paste(focusplot4,"Summary")}
     focusplots = c(focusplot, focusplot2, focusplot3, focusplot4, focusplot, focusplot)
     focusplot  = focusplots[n]
+    
     return(focusplot)}
 
 #UI and Server for Shiny------------------------------------------
 server <- function(input, output, session){ 
-  #Shiny Server. Plot0 is main plot, Plots1-4 are for "all" reports, 5-6 for comparisions
-  compareState=FALSE
-  
-  output$Plot0 <- renderPlot(generate_plot(identify_plot(input,1),input,data,compareState,plotlog,lookahead,sSocialDist,eSocialDist,54))#single plot
-  output$Plot1 <- renderPlot(generate_plot(identify_plot(input,1),input,data,compareState,plotlog,lookahead,sSocialDist,eSocialDist,20))#4 box
-  output$Plot2 <- renderPlot(generate_plot(identify_plot(input,2),input,data,compareState,plotlog,lookahead,sSocialDist,eSocialDist,20))
-  output$Plot3 <- renderPlot(generate_plot(identify_plot(input,3),input,data,compareState,plotlog,lookahead,sSocialDist,eSocialDist,20))
-  output$Plot4 <- renderPlot(generate_plot(identify_plot(input,4),input,data,compareState,plotlog,lookahead,sSocialDist,eSocialDist,20))
-  output$Plot5 <- renderPlot(generate_plot(identify_plot(input,5),input,data,compareState,plotlog,lookahead,sSocialDist,eSocialDist,20))#compare1  
-  output$Plot6 <- renderPlot(generate_plot(identify_plot(input,6),input,data,TRUE,plotlog,lookahead,sSocialDist,eSocialDist,20))        #compare2 
-  output$Plot7 <- renderPlot(generate_plot(identify_plot(input,1),input,data,compareState,plotlog,lookahead,sSocialDist,eSocialDist,20)) #all all 
-  output$Plot8 <- renderPlot(generate_plot(identify_plot(input,2),input,data,compareState,plotlog,lookahead,sSocialDist,eSocialDist,20)) #all all
+  #Shiny Server. Plot0 is main plot, Plots1-4 are for "all" reports, 5-6 where for comparisions
+  output$Plot0 <- renderPlot(generate_plot(identify_plot(input,1),input,data,plotlog,lookahead,sSocialDist,eSocialDist,54))#single plot
+  output$Plot7 <- renderPlot(generate_plot(identify_plot(input,1),input,data,plotlog,lookahead,sSocialDist,eSocialDist,20)) #all all 
+  output$Plot8 <- renderPlot(generate_plot(identify_plot(input,2),input,data,plotlog,lookahead,sSocialDist,eSocialDist,20)) #all all
   #  query <- parseQueryString(session$clientData$url_search)
   #  paste(names(query), query, sep = "=", collapse=", ")
   }
@@ -975,41 +973,39 @@ ui     <- function(request){
     sidebarLayout(
       sidebarPanel(
         bookmarkButton(label="Share",inline=TRUE), 
-        #tags$a(href="http://app.jackprior.org", "RESET"),
-        tags$a(href="", "RESET"),tags$a(href="https://covid19.jackprior.org/app-jackprior-org/", target="_blank","HELP"),
-        radioButtons("mode",  "Which Analysis?", c("Trends","Comparisons","Rankings"), selected = c("Trends"), inline=TRUE),
+        tags$a(href="http://app.jackprior.org", "RESET"),
+        #tags$a(href="", "RESET"), #this doesn't reset bookmarked iphone 
+        tags$a(href="https://covid19.jackprior.org/app-jackprior-org/", target="_blank","HELP"),
+        radioButtons("mode",  "Which Analysis?", c("Trends","Rankings"), selected = c("Trends"), inline=TRUE),
         radioButtons("scope", "Where to Look?",  c("World","USA", "All", "Custom"),                  selected = "USA",      inline=TRUE),
         checkboxInput("hotspots",    "Focus on Hot Spots", TRUE),
-        conditionalPanel(condition = "(input.scope =='All') &   (!input.hotspots)   & ((input.mode == 'Trends') |(input.mode == 'Comparisons'))", selectInput("region",  'Select Countries/States', rcFun(), multiple=TRUE, selected = "_World")),
-        conditionalPanel(condition = "(input.scope =='World')&  (!input.hotspots)   & ((input.mode == 'Trends') |(input.mode == 'Comparisons'))", selectInput("country", 'Select Countries',        wcFun(), multiple=TRUE, selected = refCountry )),
-        conditionalPanel(condition = "(input.scope =='USA')   & (!input.hotspots)   & ((input.mode == 'Trends') |(input.mode == 'Comparisons'))", selectInput("state",   'Select States',           scFun(), multiple=TRUE, selected = refState )),
+        conditionalPanel(condition = "(input.scope =='All') &   (!input.hotspots)   & (input.mode == 'Trends')", selectInput("region",  'Select Countries/States', rcFun(), multiple=TRUE, selected = "_World")),
+        conditionalPanel(condition = "(input.scope =='World')&  (!input.hotspots)   & (input.mode == 'Trends')", selectInput("country", 'Select Countries',        wcFun(), multiple=TRUE, selected = refCountry )),
+        conditionalPanel(condition = "(input.scope =='USA')   & (!input.hotspots)   & (input.mode == 'Trends')", selectInput("state",   'Select States',           scFun(), multiple=TRUE, selected = refState )),
         
-        conditionalPanel(condition = "(input.hotspots & input.scope=='All'   & ((input.mode == 'Trends') |(input.mode == 'Comparisons')))", selectInput("hregion", 'All Hot Spots (Use Reset)',  rcFun(), multiple=TRUE, selected=c(refState,get_hot_spots(allData)))),
-        conditionalPanel(condition = "(input.hotspots & input.scope=='World' & ((input.mode == 'Trends') |(input.mode == 'Comparisons')))", selectInput("hcountry",'World Hot Spots (Use Reset)',wcFun(), multiple=TRUE, selected=c(refCountry,get_hot_spots(worldData)))),
-        conditionalPanel(condition = "(input.hotspots & input.scope=='USA'   & ((input.mode == 'Trends') |(input.mode == 'Comparisons')))", selectInput("hstate",  'US Hot Spots (Use Reset)',     scFun(), multiple=TRUE, selected=c(refState,get_hot_spots(amerData )))),
-        conditionalPanel(condition = "(input.scope == 'Custom')",                                                              selectInput("cregion",  'Select Custom Dataset',         rcFun(), multiple=TRUE, selected = c("_Ireland","Belgium","_France","MA"))), 
+        conditionalPanel(condition = "(input.hotspots & input.scope=='All'   & input.mode == 'Trends')", selectInput("hregion", 'All Hot Spots (Use Reset)',  rcFun(), multiple=TRUE, selected=c(refState,get_hot_spots(allData)))),
+        conditionalPanel(condition = "(input.hotspots & input.scope=='World' & input.mode == 'Trends')", selectInput("hcountry",'World Hot Spots (Use Reset)',wcFun(), multiple=TRUE, selected=c(refCountry,get_hot_spots(worldData)))),
+        conditionalPanel(condition = "(input.hotspots & input.scope=='USA'   & input.mode == 'Trends')", selectInput("hstate",  'US Hot Spots (Use Reset)',     scFun(), multiple=TRUE, selected=c(refState,get_hot_spots(amerData )))),
+        conditionalPanel(condition = "(input.scope == 'Custom')",                                        selectInput("cregion",  'Select Custom Dataset',         rcFun(), multiple=TRUE, selected = c("_Ireland","Belgium","_France","MA"))), 
         
-        conditionalPanel(condition = "(input.scope =='All')    & (input.mode == 'Comparisons')",    selectInput("region2",  'Select comparision',      rcFun(),  multiple=TRUE, selected = "_USA" )),
-        conditionalPanel(condition = "(input.scope =='World')  & (input.mode == 'Comparisons')",    selectInput("country2", 'Select comparison',       wcFun(),  multiple=TRUE, selected = "_USA" )),
-        conditionalPanel(condition = "(input.scope =='USA')    & (input.mode == 'Comparisons')",    selectInput("state2",   'Select comparison',       scFun(),  multiple=TRUE, selected = "CT"   )),
-        conditionalPanel(condition = "(input.scope =='Custom') & (input.mode == 'Comparisons')",    selectInput("cregion2", 'Select comparision',      rcFun(),   multiple=TRUE, selected= "MA"  )),
-        
-        radioButtons("feature", "What Aspect?",   c("Cases", "Deaths",  "Estimated Cases", "Tests","Hospitalizations", "All"), selected = "Cases",inline=TRUE),
-        radioButtons("aspect",  "What Dimension?",c("Total","Daily","Flattening", "Hot", "%Complete", "CFR etc","Marginal","All"),                selected = "Daily",inline=TRUE),
+        conditionalPanel( condition = "input.mode  == 'Trends' & input.scope !== 'USA'", radioButtons("feature", "What Aspect?",           c("Cases", "Deaths",  "Estimated Cases",                             "All"), selected = "Estimated Cases",inline=TRUE)),
+        conditionalPanel( condition = "input.mode  == 'Trends' & input.scope  == 'USA'", radioButtons("featureUSA", "What Aspect?",        c("Cases", "Deaths",  "Estimated Cases", "Tests","Hospitalizations", "All"), selected = "Estimated Cases",inline=TRUE)),
+        conditionalPanel( condition = "input.mode !== 'Trends' & input.scope !== 'USA'", radioButtons("featureRanking", "What Aspect?",    c("Cases", "Deaths",  "Estimated Cases"                                   ), selected = "Estimated Cases",inline=TRUE)), 
+        conditionalPanel( condition = "input.mode !== 'Trends' & input.scope  == 'USA'", radioButtons("featureRankingUSA", "What Aspect?", c("Cases", "Deaths",  "Estimated Cases", "Tests","Hospitalizations"       ), selected = "Estimated Cases",inline=TRUE)),                     
+                         
+        conditionalPanel(condition = "input.mode  == 'Trends'",  radioButtons("aspect",  "What Dimension?",c("Total","Daily","Flattening", "CFR etc","Marginal"),  selected = "Daily",inline=TRUE) ),
+        conditionalPanel(condition = "input.mode !== 'Trends' ", radioButtons("aspectRanking",  "What Dimension?", c("Total","Daily","Flattening", "Hot", "%Complete", "CFR etc","Marginal"), selected = "Daily",inline=TRUE)),
+                                              
         checkboxInput("log",    "Log Scale", FALSE),
         checkboxInput("normalize","Normalize?",value=TRUE),checkboxInput("march1","Start 15Mar?",value=TRUE),
+        
         sliderInput("look", "What Forecast Horizon?",    min = Sys.Date()+4,            max = Sys.Date()+maxforecastdays, value = floor_date(Sys.Date()+defaultforecastdays,"month")),
         sliderInput("sdw",  "What Data for Model",       min = Sys.Date()-3*distwindow, max = Sys.Date()-1,               value = c(as.Date(as.Date(Sys.Date()-distwindow)),as.Date(Sys.Date()-1),round=TRUE,dragRange=FALSE))
         ),
+      
       mainPanel(
-                 conditionalPanel(condition = "(input.aspect !== 'All') & ( input.mode !== 'Comparisons')",  plotOutput("Plot0",height="750px")),
-                 conditionalPanel(condition = "input.mode  == 'Comparisons'",
-                                  fluidRow(column(12,  plotOutput("Plot5"))),
-                                  fluidRow(column(12,  plotOutput("Plot6")))),
-                conditionalPanel(condition = "(input.aspect  == 'All') & (input.feature !== 'All')",
-                                  fluidRow(column(6,  plotOutput("Plot1")), column(6,plotOutput("Plot3"))),
-                                  fluidRow(column(6,  plotOutput("Plot2")), column(6,plotOutput("Plot4")))),
-                conditionalPanel(condition = "(input.aspect  == 'All') & (input.feature == 'All')",
+               conditionalPanel(condition = "input.aspect !== 'All'",  plotOutput("Plot0",height="750px")),
+              conditionalPanel(condition = "(input.aspect  == 'All') & (input.feature == 'All')",
                                  fluidRow(column(12,  plotOutput("Plot7"))),
                                  fluidRow(column(12,  plotOutput("Plot8")))))))}
 
@@ -1017,14 +1013,15 @@ ui     <- function(request){
 refresh=TRUE
 if (runLocal){ setwd("Documents/My R/covid19local/covid19code")}
 try({load("alldata.RData" )
-     if (max(allData$rdate)<(Sys.Date()-1)){refresh=TRUE}else{refresh=FALSE}})
+      print(max(amerData$rdate))
+   if (max(amerData$rdate)<(Sys.Date()-1)){refresh=TRUE}else{refresh=FALSE}})
 #forceRefresh=TRUE
 if (refresh|forceRefresh) {
   print("reloading data")
   amerData     = get_amer_data(refresh)
   worldData    = get_world_data(refresh)
   newtonData   = get_newton_data() 
-  USnoNYNJ     = region_aggregate(amerData[!grepl("NY|NJ",amerData$state), ],"US-NYNJ") #doesn't sum states without final entries. has hospitalization data 
+  USnoNYNJ     = region_aggregate(amerData[!grepl("NY|NJ",amerData$state), ],"US-NewYorkNewJersey") #doesn't sum states without final entries. has hospitalization data 
   #worldData    = worldData[!(worldData$state == "_USA"),]#replace international usa data with sum of states + some territories. 
   #worldData    = rbind(worldData,USStates)
   world        = region_aggregate(worldData,"_World")
