@@ -735,7 +735,7 @@ generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSo
   #takes menu input and chosen report (focusplot) and returns plot object to UI
   sSocialDist  = input$sdw[1]
   eSocialDist  = input$sdw[2]
-  normalize    = input$normalize
+  normalize    = grepl(paste(input$options,collapse="|"),"normalize")
   lookahead = as.integer(input$look-eSocialDist)
   overlay = FALSE
   try({
@@ -764,18 +764,19 @@ generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSo
     if (input$scope == "World")     {data = worldData}}
   }) #catch bad old hyperlinks
   
-  if (input$march1){data=data[data$rdate>=ymd("20200315"),]}
+  if (grepl(paste(input$options,collapse="|"),"march1")){data=data[data$rdate>=ymd("20200315"),]}
   
   showhosp = 0
   showest  = 0 
   showtest = 0 
-  if (input$log)  {plotlog  = 1} else {plotlog  = 0} #changed from 0 1 boolean in interface late in game
+  if (grepl(paste(input$options,collapse="|"),"log")) {plotlog  = 1} else {plotlog  = 0} #changed from 0 1 boolean in interface late in game
   if (is.null(focusplot)){return(plot_unavailable())}
   
   if (input$mode=="Trends"){ if (!input$scope=="USA") { inputfeature=input$feature}        else {inputfeature=input$featureUSA} }
   else                      {if (!input$scope=="USA") { inputfeature=input$featureRanking} else {inputfeature=input$featureRankingUSA}}
   
   if (overlay & (inputfeature == "All"))   {return(plot_unavailable("for 'all' aspects for 2+ regions"))}
+  if ((input$aspect == "CFR etc") & (inputfeature=="All"))   {return(plot_unavailable("for 'all' except daily/total"))}
   if (focusplot == "NA")                    {return(plot_unavailable())}
   daily=FALSE
   if (focusplot == "Total Tests")           {return(plot_total(data,estate,plotlog,0,0,1      , showhosp,showest,lookahead,sSocialDist,eSocialDist,normalize,daily,overlay))}
@@ -985,15 +986,20 @@ ui     <- function(request){
         tags$a(href="https://covid19.jackprior.org/app-jackprior-org/", target="_blank","HELP"),
         radioButtons("mode",  "Which Analysis?", c("Trends","Rankings"), selected = c("Trends"), inline=TRUE),
         radioButtons("scope", "Where to Look?",  c("World","USA", "All", "Custom"),                  selected = "USA",      inline=TRUE),
-        checkboxInput("hotspots",    "Focus on Hot Spots", TRUE),
+        
+        
         conditionalPanel(condition = "(input.scope =='All') &   (!input.hotspots)   & (input.mode == 'Trends')", selectInput("region",  'Select Countries/States', rcFun(), multiple=TRUE, selected = "_World")),
         conditionalPanel(condition = "(input.scope =='World')&  (!input.hotspots)   & (input.mode == 'Trends')", selectInput("country", 'Select Countries',        wcFun(), multiple=TRUE, selected = refCountry )),
         conditionalPanel(condition = "(input.scope =='USA')   & (!input.hotspots)   & (input.mode == 'Trends')", selectInput("state",   'Select States',           scFun(), multiple=TRUE, selected = refState )),
+        
         
         conditionalPanel(condition = "(input.hotspots & input.scope=='All'   & input.mode == 'Trends')", selectInput("hregion", 'All Hot Spots (+NY ref)',  rcFun(), multiple=TRUE, selected=c(refState,get_hot_spots(allData)))),
         conditionalPanel(condition = "(input.hotspots & input.scope=='World' & input.mode == 'Trends')", selectInput("hcountry",'World Hot Spots (+USA ref)',wcFun(), multiple=TRUE, selected=c(refCountry,get_hot_spots(worldData)))),
         conditionalPanel(condition = "(input.hotspots & input.scope=='USA'   & input.mode == 'Trends')", selectInput("hstate",  'US Hot Spots (+NY ref)',     scFun(), multiple=TRUE, selected=c(refState,get_hot_spots(amerData )))),
         conditionalPanel(condition = "(input.scope == 'Custom')",                                        selectInput("cregion",  'Select Custom Dataset',         rcFun(), multiple=TRUE, selected = c("_Ireland","Belgium","_France","MA"))), 
+        
+        checkboxInput("hotspots",    "Focus on Hot Spots", TRUE),
+        
         
         conditionalPanel( condition = "input.mode  == 'Trends' & input.scope !== 'USA'", radioButtons("feature", "What Aspect?",           c("Cases", "Deaths",  "Estimated Cases",                             "All"), selected = "Cases",inline=TRUE)),
         conditionalPanel( condition = "input.mode  == 'Trends' & input.scope  == 'USA'", radioButtons("featureUSA", "What Aspect?",        c("Cases", "Deaths",  "Estimated Cases", "Tests","Hospitalizations", "All"), selected = "Cases",inline=TRUE)),
@@ -1003,8 +1009,10 @@ ui     <- function(request){
         conditionalPanel(condition = "input.mode  == 'Trends'",  radioButtons("aspect",  "What Dimension?",c("Total","Daily","Flattening", "CFR etc","Incremental"),  selected = "Daily",inline=TRUE) ),
         conditionalPanel(condition = "input.mode !== 'Trends' ", radioButtons("aspectRanking",  "What Dimension?", c("Total","Daily","Flattening", "Hot", "%Complete", "CFR etc","Incremental"), selected = "Daily",inline=TRUE)),
                                               
-        checkboxInput("log",    "Log Scale", FALSE),
-        checkboxInput("normalize","Normalize?",value=TRUE),checkboxInput("march1","Start 15Mar?",value=TRUE),
+        #checkboxInput("log",    "Log Scale", FALSE),
+        #checkboxInput("normalize","Normalize?",value=TRUE),checkboxInput("march1","Start 15Mar?",value=TRUE),
+        checkboxGroupInput('options',"Options",choices=c("LogY"="log","/mil"="normalize","15Mar-"="march1"),selected=c("normalize","march1"), inline=TRUE),
+        
         
         sliderInput("look", "What Forecast Horizon?",    min = Sys.Date()+4,            max = Sys.Date()+maxforecastdays, value = floor_date(Sys.Date()+defaultforecastdays,"month")),
         sliderInput("sdw",  "What Data for Model",       min = Sys.Date()-3*distwindow, max = Sys.Date()-1,               value = c(as.Date(as.Date(Sys.Date()-distwindow)),as.Date(Sys.Date()-1),round=TRUE,dragRange=FALSE))
