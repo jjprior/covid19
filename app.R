@@ -870,13 +870,12 @@ generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSo
   if (focusplot == "Growth Rate Hospitalizations Summary"){return(plot_now_summary(data,focusplot,plotlog,0,"projectedHospGrowthRate",sSocialDist,eSocialDist,nStates) )}
   
 
-  
   return(plot_unavailable())
 }
 
 namePlot      <- function(input){
   #general naming based on inputs
-  if (input$mode=="Ranking") {aspect       = input$aspectRanking } else { aspect=input$aspect}
+  if (input$mode=="Rankings") {aspect       = input$aspectRanking } else { aspect = input$aspect}
   if (input$mode=="Trends"){ if (!input$scope=="USA") { inputfeature=input$feature}        else {inputfeature=input$featureUSA} }
   else                      {if (!input$scope=="USA") { inputfeature=input$featureRanking} else {inputfeature=input$featureRankingUSA}}
   
@@ -885,7 +884,6 @@ namePlot      <- function(input){
   pname = str_replace(pname,"Flattening","Growth Rate")
   pname = str_replace(pname,"Hot","Growth (/million)")
   pname = str_replace(pname,"Estimated","Est")
-  
   return(pname)}
 
 identify_plot <- function(input,n){
@@ -951,7 +949,7 @@ identify_plot <- function(input,n){
         
         if (aspect == "All")        {focusplot=   "Total All"  
                                            focusplot2 = "Daily All"  }}} # end if all 
-    if (grepl("Rank",input$mode)){
+    if (input$mode=="Rankings"){
       focusplot =  paste(focusplot, "Summary")
       focusplot2 = paste(focusplot2,"Summary")
       focusplot3 = paste(focusplot3,"Summary")
