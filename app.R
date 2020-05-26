@@ -189,20 +189,20 @@ project_growth_rate <- function(x,s,totfeature,fracfeature){
 covid_calc <- function(x){
   #Add calculated attributes to raw imported data
   x$cfr                 = x$death/x$positive
-  x$cfrMarginal         = x$deathIncrease/x$positiveIncrease
+  x$cfrIncremental         = x$deathIncrease/x$positiveIncrease
   x$ifrRatio            = x$cfr/0.0066
-  x$ifrRatioMarginal    = x$cfrMarginal/0.0066
+  x$ifrRatioIncremental    = x$cfrIncremental/0.0066
   x$positiveEst         = x$positive*x$ifrRatio
   x$positiveIncreaseEst = x$positiveIncrease*x$ifrRatio
   x$dperh               = x$death/x$hosp #deaths per hospitalization
-  x$dperhMarginal       = x$deathIncrease/x$hospIncrease
+  x$dperhIncremental       = x$deathIncrease/x$hospIncrease
   x$fracpos             = x$positive/x$test
-  x$fracposMarginal     = x$positiveIncrease/x$testIncrease
+  x$fracposIncremental     = x$positiveIncrease/x$testIncrease
   x$fracpoptested       = x$test/x$pop
-  x$fracpoptestedMarginal = x$testIncrease/x$pop
-  x$positiveMarginal    = x$positiveIncrease/x$testIncrease
-  x$deathMarginal       = x$deathIncrease/x$hospIncrease
-  x$hospMarginal        = x$hospIncrease/x$positiveIncrease
+  x$fracpoptestedIncremental = x$testIncrease/x$pop
+  x$positiveIncremental    = x$positiveIncrease/x$testIncrease
+  x$deathIncremental       = x$deathIncrease/x$hospIncrease
+  x$hospIncremental        = x$hospIncrease/x$positiveIncrease
   x$fracPositiveIncrease    = NA
   x$fracHospIncrease        = NA
   x$fracDeathIncrease       = NA
@@ -456,7 +456,7 @@ plot_feature        <- function(sdata,feature,ftitle,cstate,plotlog,lookahead,sS
     index=sdata$state==s
     sdata$movingAvg[index] = as.numeric(ma(sdata$y[index],7)) }
   
-  if ((grepl("frac|CFR|cfr|per|dperh|Pct",ftitle))|(grepl("frac|CFR|cfr|per|dperh|Pct|Marginal",feature))){ispct=1}else{ispct=0}
+  if ((grepl("frac|CFR|cfr|per|dperh|Pct",ftitle))|(grepl("frac|CFR|cfr|per|dperh|Pct|Incremental",feature))){ispct=1}else{ispct=0}
   p=ggplot()  
   if (!overlay){p = p+geom_point(sdata, mapping=aes(x=rdate,y=y,color=flegend))}
   
@@ -772,8 +772,8 @@ generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSo
   if (input$log)  {plotlog  = 1} else {plotlog  = 0} #changed from 0 1 boolean in interface late in game
   if (is.null(focusplot)){return(plot_unavailable())}
   
-  if (input$mode=="Trends"){ if (!input$scope=="USA"){inputfeature=input$feature} else {inputfeature=input$featureUSA} }
-  else                      {if (!input$scope=="USA"){inputfeature=input$featureRanking} else {inputfeature=input$featureRankingUSA}}
+  if (input$mode=="Trends"){ if (!input$scope=="USA") { inputfeature=input$feature}        else {inputfeature=input$featureUSA} }
+  else                      {if (!input$scope=="USA") { inputfeature=input$featureRanking} else {inputfeature=input$featureRankingUSA}}
   
   if (overlay & (inputfeature == "All"))   {return(plot_unavailable("for 'all' aspects for 2+ regions"))}
   if (focusplot == "NA")                    {return(plot_unavailable())}
@@ -820,11 +820,11 @@ generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSo
   if (focusplot == "Deaths per Hospitalization")   {return(plot_feature(data,"dperh",         focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}
   if (focusplot == "IFR Multiplier")               {return(plot_feature(data,"ifrRatio",      focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,""))}
   
-  if (focusplot == "Marginal Case Fatality Rate")     {return(plot_feature(data,"cfrMarginal",       focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}     
-  if (focusplot == "Marginal % Positive")             {return(plot_feature(data,"fracposMarginal",       focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}
-  if (focusplot == "Marginal % Pop Tested")                 {return(plot_feature(data,"fracpoptestedMarginal", focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}#not needed?
-  if (focusplot == "Marginal Deaths per Hospitalization")   {return(plot_feature(data,"dperhMarginal",         focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}
-  if (focusplot == "Marginal IFR Multiplier")               {return(plot_feature(data,"ifrRatioMarginal",      focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist))}
+  if (focusplot == "Incremental Case Fatality Rate")     {return(plot_feature(data,"cfrIncremental",       focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}     
+  if (focusplot == "Incremental % Positive")             {return(plot_feature(data,"fracposIncremental",       focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}
+  if (focusplot == "Incremental % Pop Tested")                 {return(plot_feature(data,"fracpoptestedIncremental", focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}#not needed?
+  if (focusplot == "Incremental Deaths per Hospitalization")   {return(plot_feature(data,"dperhIncremental",         focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}
+  if (focusplot == "Incremental IFR Multiplier")               {return(plot_feature(data,"ifrRatioIncremental",      focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist))}
   
   #Top/Bottom Summaries 
   if (focusplot == "Total Tests Summary")           { return(plot_now_summary(data,focusplot,plotlog,normalize,"test",     sSocialDist,eSocialDist,nStates) )}
@@ -851,11 +851,11 @@ generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSo
   if (focusplot == "Deaths per Hospitalization Summary"){ return(plot_now_summary(data,focusplot,plotlog,0,"dperh",sSocialDist,eSocialDist,nStates))}
   
   
-  if (focusplot == "Marginal % Positive Summary")               { return(plot_now_summary(data,focusplot,plotlog,normalize,"fracposMarginal",            sSocialDist,eSocialDist,nStates) )}
-  if (focusplot == "Marginal % Pop Tested Summary")              { return(plot_now_summary(data,focusplot,plotlog,0,"fracpoptestedMarginal",          sSocialDist,eSocialDist,nStates) )}
-  if (focusplot == "Marginal Case Fatality Rate Summary")        { return(plot_now_summary(data,focusplot,plotlog,0,"cfrMarginal",          sSocialDist,eSocialDist,nStates) )}
-  if (focusplot == "Marginal IFR Multiplier Summary")            { return(plot_now_summary(data,focusplot,plotlog,0,"ifrRatioMarginal",     sSocialDist,eSocialDist,nStates) )}
-  if (focusplot == "Marginal Deaths per Hospitalization Summary"){ return(plot_now_summary(data,focusplot,plotlog,0,"dperhMarginal",sSocialDist,eSocialDist,nStates))}
+  if (focusplot == "Incremental % Positive Summary")               { return(plot_now_summary(data,focusplot,plotlog,normalize,"fracposIncremental",            sSocialDist,eSocialDist,nStates) )}
+  if (focusplot == "Incremental % Pop Tested Summary")              { return(plot_now_summary(data,focusplot,plotlog,0,"fracpoptestedIncremental",          sSocialDist,eSocialDist,nStates) )}
+  if (focusplot == "Incremental Case Fatality Rate Summary")        { return(plot_now_summary(data,focusplot,plotlog,0,"cfrIncremental",          sSocialDist,eSocialDist,nStates) )}
+  if (focusplot == "Incremental IFR Multiplier Summary")            { return(plot_now_summary(data,focusplot,plotlog,0,"ifrRatioIncremental",     sSocialDist,eSocialDist,nStates) )}
+  if (focusplot == "Incremental Deaths per Hospitalization Summary"){ return(plot_now_summary(data,focusplot,plotlog,0,"dperhIncremental",sSocialDist,eSocialDist,nStates))}
   
   if (focusplot == "Growth (/million) Tests Summary")           {return(plot_now_summary(data,focusplot,plotlog,0,"projectedTestGrowth",sSocialDist,eSocialDist,nStates) )}
   if (focusplot == "Growth (/million) Cases Summary")           {return(plot_now_summary(data,focusplot,plotlog,0,"projectedCaseGrowth",sSocialDist,eSocialDist,nStates) )}
@@ -876,15 +876,24 @@ generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSo
 
 namePlot      <- function(input){
   #general naming based on inputs
-  if (input$mode=="Rankings"){pname = paste(input$aspectRanking, input$featureRanking) }else{ pname = paste(input$aspect, input$feature)}
+  if (input$mode=="Ranking") {aspect       = input$aspectRanking } else { aspect=input$aspect}
+  if (input$mode=="Trends"){ if (!input$scope=="USA") { inputfeature=input$feature}        else {inputfeature=input$featureUSA} }
+  else                      {if (!input$scope=="USA") { inputfeature=input$featureRanking} else {inputfeature=input$featureRankingUSA}}
+  
+  pname = paste(aspect, inputfeature) 
+
   pname = str_replace(pname,"Flattening","Growth Rate")
   pname = str_replace(pname,"Hot","Growth (/million)")
   pname = str_replace(pname,"Estimated","Est")
+  
   return(pname)}
 
 identify_plot <- function(input,n){
   if (input$mode=="Ranking") {aspect       = input$aspectRanking } else { aspect=input$aspect}
-  if (input$mode=="Ranking") {inputfeature = input$fetureRanking } else { inputfeature=input$feature}
+  
+  if (input$mode=="Trends"){ if (!input$scope=="USA") { inputfeature=input$feature}        else {inputfeature=input$featureUSA} }
+  else                      {if (!input$scope=="USA") { inputfeature=input$featureRanking} else {inputfeature=input$featureRankingUSA}}
+  
   #pick plot based on UI choices
    
     focusplot ="NA"
@@ -894,19 +903,19 @@ identify_plot <- function(input,n){
     focusplot = namePlot(input) #default nameing
     
     #ratio reports
-    if (input$aspect == "CFR etc"){
+    if (aspect == "CFR etc"){
       if (inputfeature  == "Tests")            {focusplot = "% Pop Tested" }
       if (inputfeature  == "Cases")            {focusplot = "% Positive" }
       if (inputfeature  == "Estimated Cases")  {focusplot = "IFR Multiplier" }
       if (inputfeature  == "Deaths")           {focusplot = "Case Fatality Rate" }
       if (inputfeature == "Hospitalizations")  {focusplot = "Deaths per Hospitalization"}}
     
-    if (aspect == "Marginal"){
-      if (inputfeature  == "Tests")            {focusplot = "Marginal % Pop Tested" }
-      if (inputfeature  == "Cases")            {focusplot = "Marginal % Positive" }
-      if (inputfeature  == "Estimated Cases")  {focusplot = "Marginal IFR Multiplier" }
-      if (inputfeature  == "Deaths")           {focusplot = "Marginal Case Fatality Rate" }
-      if (inputfeature == "Hospitalizations")  {focusplot = "Marginal Deaths per Hospitalization"}}
+    if (aspect == "Incremental"){
+      if (inputfeature  == "Tests")            {focusplot = "Incremental % Pop Tested" }
+      if (inputfeature  == "Cases")            {focusplot = "Incremental % Positive" }
+      if (inputfeature  == "Estimated Cases")  {focusplot = "Incremental IFR Multiplier" }
+      if (inputfeature  == "Deaths")           {focusplot = "Incremental Case Fatality Rate" }
+      if (inputfeature == "Hospitalizations")  {focusplot = "Incremental Deaths per Hospitalization"}}
         
     if (aspect == "All"){ # All Plots
       if (inputfeature=="Tests")
@@ -983,18 +992,18 @@ ui     <- function(request){
         conditionalPanel(condition = "(input.scope =='World')&  (!input.hotspots)   & (input.mode == 'Trends')", selectInput("country", 'Select Countries',        wcFun(), multiple=TRUE, selected = refCountry )),
         conditionalPanel(condition = "(input.scope =='USA')   & (!input.hotspots)   & (input.mode == 'Trends')", selectInput("state",   'Select States',           scFun(), multiple=TRUE, selected = refState )),
         
-        conditionalPanel(condition = "(input.hotspots & input.scope=='All'   & input.mode == 'Trends')", selectInput("hregion", 'All Hot Spots (Use Reset)',  rcFun(), multiple=TRUE, selected=c(refState,get_hot_spots(allData)))),
-        conditionalPanel(condition = "(input.hotspots & input.scope=='World' & input.mode == 'Trends')", selectInput("hcountry",'World Hot Spots (Use Reset)',wcFun(), multiple=TRUE, selected=c(refCountry,get_hot_spots(worldData)))),
-        conditionalPanel(condition = "(input.hotspots & input.scope=='USA'   & input.mode == 'Trends')", selectInput("hstate",  'US Hot Spots (Use Reset)',     scFun(), multiple=TRUE, selected=c(refState,get_hot_spots(amerData )))),
+        conditionalPanel(condition = "(input.hotspots & input.scope=='All'   & input.mode == 'Trends')", selectInput("hregion", 'All Hot Spots (+NY ref)',  rcFun(), multiple=TRUE, selected=c(refState,get_hot_spots(allData)))),
+        conditionalPanel(condition = "(input.hotspots & input.scope=='World' & input.mode == 'Trends')", selectInput("hcountry",'World Hot Spots (+USA ref)',wcFun(), multiple=TRUE, selected=c(refCountry,get_hot_spots(worldData)))),
+        conditionalPanel(condition = "(input.hotspots & input.scope=='USA'   & input.mode == 'Trends')", selectInput("hstate",  'US Hot Spots (+NY ref)',     scFun(), multiple=TRUE, selected=c(refState,get_hot_spots(amerData )))),
         conditionalPanel(condition = "(input.scope == 'Custom')",                                        selectInput("cregion",  'Select Custom Dataset',         rcFun(), multiple=TRUE, selected = c("_Ireland","Belgium","_France","MA"))), 
         
-        conditionalPanel( condition = "input.mode  == 'Trends' & input.scope !== 'USA'", radioButtons("feature", "What Aspect?",           c("Cases", "Deaths",  "Estimated Cases",                             "All"), selected = "Estimated Cases",inline=TRUE)),
-        conditionalPanel( condition = "input.mode  == 'Trends' & input.scope  == 'USA'", radioButtons("featureUSA", "What Aspect?",        c("Cases", "Deaths",  "Estimated Cases", "Tests","Hospitalizations", "All"), selected = "Estimated Cases",inline=TRUE)),
-        conditionalPanel( condition = "input.mode !== 'Trends' & input.scope !== 'USA'", radioButtons("featureRanking", "What Aspect?",    c("Cases", "Deaths",  "Estimated Cases"                                   ), selected = "Estimated Cases",inline=TRUE)), 
-        conditionalPanel( condition = "input.mode !== 'Trends' & input.scope  == 'USA'", radioButtons("featureRankingUSA", "What Aspect?", c("Cases", "Deaths",  "Estimated Cases", "Tests","Hospitalizations"       ), selected = "Estimated Cases",inline=TRUE)),                     
+        conditionalPanel( condition = "input.mode  == 'Trends' & input.scope !== 'USA'", radioButtons("feature", "What Aspect?",           c("Cases", "Deaths",  "Estimated Cases",                             "All"), selected = "Cases",inline=TRUE)),
+        conditionalPanel( condition = "input.mode  == 'Trends' & input.scope  == 'USA'", radioButtons("featureUSA", "What Aspect?",        c("Cases", "Deaths",  "Estimated Cases", "Tests","Hospitalizations", "All"), selected = "Cases",inline=TRUE)),
+        conditionalPanel( condition = "input.mode !== 'Trends' & input.scope !== 'USA'", radioButtons("featureRanking", "What Aspect?",    c("Cases", "Deaths",  "Estimated Cases"                                   ), selected = "Cases",inline=TRUE)), 
+        conditionalPanel( condition = "input.mode !== 'Trends' & input.scope  == 'USA'", radioButtons("featureRankingUSA", "What Aspect?", c("Cases", "Deaths",  "Estimated Cases", "Tests","Hospitalizations"       ), selected = "Cases",inline=TRUE)),                     
                          
-        conditionalPanel(condition = "input.mode  == 'Trends'",  radioButtons("aspect",  "What Dimension?",c("Total","Daily","Flattening", "CFR etc","Marginal"),  selected = "Daily",inline=TRUE) ),
-        conditionalPanel(condition = "input.mode !== 'Trends' ", radioButtons("aspectRanking",  "What Dimension?", c("Total","Daily","Flattening", "Hot", "%Complete", "CFR etc","Marginal"), selected = "Daily",inline=TRUE)),
+        conditionalPanel(condition = "input.mode  == 'Trends'",  radioButtons("aspect",  "What Dimension?",c("Total","Daily","Flattening", "CFR etc","Incremental"),  selected = "Daily",inline=TRUE) ),
+        conditionalPanel(condition = "input.mode !== 'Trends' ", radioButtons("aspectRanking",  "What Dimension?", c("Total","Daily","Flattening", "Hot", "%Complete", "CFR etc","Incremental"), selected = "Daily",inline=TRUE)),
                                               
         checkboxInput("log",    "Log Scale", FALSE),
         checkboxInput("normalize","Normalize?",value=TRUE),checkboxInput("march1","Start 15Mar?",value=TRUE),
