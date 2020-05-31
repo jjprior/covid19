@@ -16,7 +16,6 @@ runLocal           = FALSE # interactive at console rather than shiny - use with
 #runLocal           = TRUE # uncomment to run at console with select all lines run
 forceRefresh       = FALSE #Uncomment to force reload of data from web
 #forceRefresh       = TRUE #Uncomment to force reload of data from web -- remember need refresh if  CODE changed!!!
-
 debugprint          = 1   #set = 1 for pp(txt,var) debug printing
 lookback            = 50  #how far back model show plot model on top of data
 distwindow          = 21 #how far back for default social distancing window
@@ -25,15 +24,18 @@ defaultforecastdays = 60  #default forward forecasting
 projectDays         = 45  #Days to project out for ranking case growth rate
 caseRankThreshold   = 500 #min # of cases to be included in "ALL" rankings
 deathRankThreshold  = 50  #min # of deaths to be included in "ALL" rankings
-assumedError  = .5  # 30% 3 sigma -- THIS SHOULD BE CODED based on fits eventually. 
-nHotspots = 6 # number of hot spots in drop down. 
-plotHeight = "750px"
+assumedError        = .5  # 30% 3 sigma -- THIS SHOULD BE CODED based on fits eventually. 
+nHotspots           = 6 # number of hot spots in drop down. 
+plotHeight          = "750px"
 #PlotHeight = "1400px" 
 refState    = "NY"
 refCountry = "USA"
-
+deepBlueState = c("CA", "DC", "HI","MD", "MA","NY","RI","VT")
+deepRedState  = c("AL", "AK","AR", "ID","KS", "KY", "LA","MS","MT","NE","ND","OK","SC","SD","TN","TX","UT","WV","WY")
+electoralBlue = c("CA", "NY", "IL", "NJ", "VA", "MA", "MD", "MN", "CO","WA", "CT", "OR", "NV", "NM", "NH", "RI", "DE", "HI", "VT", "ME") 
+electoralRed  = c("AK", "MT", "ND", "SD", "WY", "ID", "NE", "WV", "AR","IA", "KS", "MS", "UT", "OK", "KY", "LA", "AL", "SC", "MO", "WI", "AZ", "IN", "TN","NC", "GA", "MI", "OH", "PA", "FL", "TX")
+electoralAll  = c(electoralRed,electoralBlue)
 pp   <- function(p1,p2="",p3="",p4=""){if (debugprint == 1){print(paste(p1,p2,p3,p4))}} #debug printing of 4 values
-
 #GET DATA FROM WEB Or DISK--------------------------------------------------------
 get_world_data    = function(refreshData=TRUE){ 
   #Load world data from web, backup load from disk
@@ -45,7 +47,7 @@ get_world_data    = function(refreshData=TRUE){
   x$deathIncrease     = as.numeric(x$deaths)
   x$state             = x$countriesAndTerritories
   x$pop               = as.numeric(x$popData2018)
-  x$positive          = NA #initialize columns
+  x$positive          = NA #initialize 
   x$death             = NA
   x            = select(x,rdate,pop,state,positive,positiveIncrease,death,deathIncrease,continentExp) #thin down to needed data
   x            = x[order(x$rdate),]
@@ -78,12 +80,16 @@ get_amer_data     <- function(refreshData=TRUE){
   data$test         = data$totalTestResults  #rename columns
   data$hosp         = data$hospitalizedCumulative
   data$hospIncrease = data$hospitalizedIncrease
+  data$hosp[data$state=="CT"]         = NA  #bad data
+  data$hospIncrease[data$state=="CT"] = NA
+  data$hosp[data$state=="IN"]         = NA  #bad data
+  data$hospIncrease[data$state=="IN"] = NA
   data$continentExp = "USA"
   data        = data[,c("date","positive","death","positiveIncrease","deathIncrease","hospIncrease","hosp","test","state","continentExp")]
   data$rdate  = parse_date_time(data$date,orders = "%y%m%d")
   spops       = read.csv("statepopstable.csv")  #spreadsheet of state populations
   data$test[data$state=="PR"]  = NA #faulty data
-  data        = data[order(data$rdate),]
+  data               = data[order(data$rdate),]
   data$pop           = NA  #initialize population column
   data$testIncrease  = NA
   for (s in unique(data$state)){  #add population data 
@@ -145,7 +151,8 @@ region_aggregate <- function(data,state="World"){ #sum up countries to world or 
     Regiondata          = merge(Regiondata,Regionhosp,         by ="rdate", all = T)
     Regiondata          = merge(Regiondata,RegionhospIncrease, by ="rdate", all = T)   
     Regiondata          = merge(Regiondata,Regiontest,         by ="rdate", all = T)
-    Regiondata          = merge(Regiondata,RegiontestIncrease, by ="rdate", all = T)}
+    Regiondata          = merge(Regiondata,RegiontestIncrease, by ="rdate", all = T)
+    Regiondata$continentExp = "USA"}
   else
     {Regiondata$test        = NA
     Regiondata$testIncrease = NA
@@ -281,14 +288,10 @@ get_pct_complete <- function(x,  lookahead, sSocialDist, eSocialDist){
   thestates = unique(x$state)
   for (s in thestates){
     index= (x$state==s) 
-    index2 = index & (x$rdate>sSocialDist) & ( x$rdate<eSocialDist) 
-    x$pctPositiveComplete[index] = NA
-    x$pctDeathComplete[index]    = NA
-    x$pctHospComplete[index]     = NA
-    if (sum(!is.na(x$fracPositiveIncrease[index2]))     > 2) {x$pctPositiveComplete[index]    = x$positive[index]   /  max(calc_forecast(x,s,"positive",    "positiveIncrease",    "fracPositiveIncrease",   lookahead,sSocialDist, eSocialDist)$positive)    }
-    if (sum(!is.na(x$fracDeathIncrease[index2]))        > 2) {x$pctDeathComplete[index]       = x$death[index]      /  max(calc_forecast(x,s,"death",       "deathIncrease",       "fracDeathIncrease",      lookahead,sSocialDist, eSocialDist)$death)       }
-    if (sum(!is.na(x$fracPositiveIncreaseEst[index2]))  > 2) {x$pctPositiveEstComplete[index] = x$positiveEst[index]/  max(calc_forecast(x,s,"positiveEst", "positiveIncreaseEst", "fracPositiveIncreaseEst",lookahead,sSocialDist, eSocialDist)$positiveEst) }
-    if (sum(!is.na(x$fracHospIncrease[index2]))         > 2) {x$pctHospComplete[index]        = x$hosp[index]       /  max(calc_forecast(x,s,"hosp",        "hospIncrease",        "fracHospIncrease",       lookahead,sSocialDist, eSocialDist)$hosp)         }}
+    x$pctPositiveComplete[index]    = x$positive[index]   /  max(-Inf,calc_forecast(x,s,"positive",    "positiveIncrease",    "fracPositiveIncrease",   lookahead,sSocialDist, eSocialDist)$positive)     
+    x$pctDeathComplete[index]       = x$death[index]      /  max(-Inf,calc_forecast(x,s,"death",       "deathIncrease",       "fracDeathIncrease",      lookahead,sSocialDist, eSocialDist)$death)       
+    x$pctPositiveEstComplete[index] = x$positiveEst[index]/  max(-Inf, calc_forecast(x,s,"positiveEst", "positiveIncreaseEst", "fracPositiveIncreaseEst",lookahead,sSocialDist, eSocialDist)$positiveEst) 
+    x$pctHospComplete[index]        = x$hosp[index]       /  max(-Inf, calc_forecast(x,s,"hosp",        "hospIncrease",        "fracHospIncrease",       lookahead,sSocialDist, eSocialDist)$hosp) }
   return(x)}
 
 growth_estimate  <- function(date0,mday0,x0,lookahead,lookback, m){
@@ -313,19 +316,26 @@ growth_estimate  <- function(date0,mday0,x0,lookahead,lookback, m){
   return(y)
 }
 
+indexFit <- function(data,cstate,sSocialDist,eSocialDist,fracfeaturestr){
+  index =          (data$state == cstate) & 
+    (data$rdate >= sSocialDist) & 
+    (data$rdate <= eSocialDist) & 
+    (data[[fracfeaturestr]]>0) & 
+    (!is.na(data[[fracfeaturestr]]))
+  return(index)}
+  
+canBeFit = function(data,cstate,sSocialDist,eSocialDist,fracfeaturestr){
+  index = indexFit(data,cstate,sSocialDist,eSocialDist,fracfeaturestr)
+  result = !( (sum(index) < 5) | is.null(index) )
+return(result)}
+
 calc_forecast    <- function(data,cstate,totfeaturestr,increasefeaturestr, fracfeaturestr,lookahead,sSocialDist, eSocialDist){
   #calculate a fitted/forecasted total, daily, and growthrate for cases, estimated cases, deaths and hospitalizations. 
   data$totfeature =  data[[totfeaturestr]]
   data$fracfeature = data[[fracfeaturestr]]
   data$increasefeature = data[[increasefeaturestr]]
-  index =          (data$state == cstate) & 
-                   (data$rdate >= sSocialDist) & 
-                   (data$rdate <= eSocialDist) & 
-                   (data$fracfeature>0) & 
-                   (!is.na(data$fracfeature))
-  n = sum(index)
-  if (n==0){return(NULL)}
-  
+  if(!canBeFit(data,cstate,sSocialDist,eSocialDist,fracfeaturestr)){return(NULL)}
+  index = indexFit(data,cstate,sSocialDist,eSocialDist,fracfeaturestr)
   data = data[index,]
   cgmodel=NULL
   try({cgmodel = lm(log(fracfeature)~mday, data=data)})
@@ -334,7 +344,7 @@ calc_forecast    <- function(data,cstate,totfeaturestr,increasefeaturestr, fracf
   if (sum(idx)==1){data=data[idx,]}
   data = data[with(data,order(rdate)),]
   
-  if (nrow(data)<7){return(NULL)}
+  if (nrow(data)<5){return(NULL)}
   try({cgmodel = lm(log(fracfeature)~mday, data=data)})
   if(is.null(cgmodel)){return(NULL)}
   date0 = max(data$rdate)
@@ -343,7 +353,7 @@ calc_forecast    <- function(data,cstate,totfeaturestr,increasefeaturestr, fracf
   
   case0 = max(data$totfeature)
   mday0 = max(data$mday)
-  if (n>1 & !is.null(cgmodel)){
+  if (!is.null(cgmodel)){
     cases    = growth_estimate(date0,mday0,case0,lookahead,lookback,cgmodel)
     newcases = c(NA,tail(cases,length(cases)-1)-head(cases,length(cases)-1))}
   else { cases   =NA
@@ -699,8 +709,7 @@ plot_growth          <- function(focusplot, theTotField,thefracField,sdata,gstat
     p = format_legend(p,gstate)
   return(p)} 
 
-#Plot Selection based on UI choices ---- 
-#identify_plot indentifies report to run and passes to generate_plot
+#Plot Selection based on UI choices: identify_plot indentifies report to run and passes to generate_plot
 generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSocialDist,nStates){
   #takes menu input and chosen report (focusplot) and returns plot object to UI
   if (is.null(focusplot) | (focusplot=="NA")) {return(plot_unavailable())}
@@ -726,9 +735,9 @@ generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSo
       estate = input$cregion
       if (estate == "IR BE FR MA")       {estate=c("Ireland","Belgium","France","MA")}
       else if (estate == "Red vs. Blue") {estate=c("Deep _Red State","Deep Blue State")}
-      else if (estate == "Blue States")  {estate= c("CA", "NY", "IL", "NJ", "VA", "MA", "MD", "MN", "CO","WA", "CT", "OR", "NV", "NM", "NH", "RI", "DE", "HI", "VT", "ME") }
-      else if (estate == "Red States")   {estate = c("AK", "MT", "ND", "SD", "WY", "ID", "NE", "WV", "AR","IA", "KS", "MS", "UT", "OK", "KY", "LA", "AL", "SC", "MO", "WI", "AZ", "IN", "TN","NC", "GA", "MI", "OH", "PA", "FL", "TX")}
-      else if (estate == "All States")   {estate = c("AK", "MT", "ND", "SD", "WY", "ID", "NE", "WV", "AR","IA", "KS", "MS", "UT", "OK", "KY", "LA", "AL", "SC", "MO", "WI", "AZ", "IN", "TN","NC", "GA", "MI", "OH", "PA", "FL", "TX","CA", "NY", "IL", "NJ", "VA", "MA", "MD", "MN", "CO","WA", "CT", "OR", "NV", "NM", "NH", "RI", "DE", "HI", "VT", "ME")}
+      else if (estate == "Blue States")  {estate= electoralBlue}
+      else if (estate == "Red States")   {estate =electoralRed}
+      else if (estate == "All States")   {estate = electoralAll}
       else if (estate == "Flattening Spectrum"){estate = c("Brazil","China","Russia","South_Korea","Switzerland","Germany","Iceland","USA","Croatia", "Sweden","Deep _Red State","Deep Blue State","Chile")}
       else if (estate == "Europe")       {estate= unique(allData$state[allData$continentExp=="Europe" ])}
       else if (estate == "Americas")     {estate= unique(allData$state[allData$continentExp=="Americas"])}
@@ -860,20 +869,14 @@ identify_plot <- function(input){
   
   focusplot = namePlot(input) #default nameing
   #ratio reports
-    if (aspect == "CFR etc"){
+    if (aspect == "CFR etc" | aspect=="Incremental"){
       if (inputfeature  == "Tests")            {focusplot = "% Pop Tested" }
       if (inputfeature  == "Cases")            {focusplot = "% Positive" }
       if (inputfeature  == "Estimated Cases")  {focusplot = "IFR Multiplier" }
       if (inputfeature  == "Deaths")           {focusplot = "Case Fatality Rate" }
-      if (inputfeature == "Hospitalizations")  {focusplot = "Deaths per Hospitalization"}}
-    
-    if (aspect == "Incremental"){
-      if (inputfeature  == "Tests")            {focusplot = "Incremental % Pop Tested" }
-      if (inputfeature  == "Cases")            {focusplot = "Incremental % Positive" }
-      if (inputfeature  == "Estimated Cases")  {focusplot = "Incremental IFR Multiplier" }
-      if (inputfeature  == "Deaths")           {focusplot = "Incremental Case Fatality Rate" }
-      if (inputfeature == "Hospitalizations")  {focusplot = "Incremental Deaths per Hospitalization"}}
-        
+      if (inputfeature == "Hospitalizations")  {focusplot = "Deaths per Hospitalization"}
+      if (aspect == "Incremental") {paste("Incremental",inputfeature)} }
+  
     if (aspect == "All"){ # All Plots
       if (inputfeature == "Tests") {focusplot  = "Total Tests" }
       if (inputfeature == "Cases") {focusplot  = "Total Cases" }
@@ -916,7 +919,7 @@ ui     <- function(request){
         
         conditionalPanel(condition = "(input.scope =='All') &   (!input.hotspots)   & (input.mode == 'Trends')", selectInput("region",  'Select Countries/States', rcFun(), multiple=TRUE, selected = "World")),
         conditionalPanel(condition = "(input.scope =='World')&  (!input.hotspots)   & (input.mode == 'Trends')", selectInput("country", 'Select Countries',        wcFun(), multiple=TRUE, selected = refCountry )),
-        conditionalPanel(condition = "(input.scope =='USA')   & (!input.hotspots)   & (input.mode == 'Trends')", selectInput("state",   'Select States',           scFun(), multiple=TRUE, selected = refState )),
+        conditionalPanel(condition = "(input.scope =='USA')   & (!input.hotspots)   & (input.mode == 'Trends')", selectInput("state",   'Select States',           scFun(), multiple=TRUE, selected = "MA" )),
         
         conditionalPanel(condition = "(input.hotspots & input.scope=='All'   & input.mode == 'Trends')", selectInput("hregion", 'All Hot Spots (+NY ref)',  rcFun(), multiple=TRUE, selected=c(refState,get_hot_spots(allData)))),
         conditionalPanel(condition = "(input.hotspots & input.scope=='World' & input.mode == 'Trends')", selectInput("hcountry",'World Hot Spots (+USA ref)',wcFun(), multiple=TRUE, selected=c(refCountry,get_hot_spots(worldData)))),
@@ -949,18 +952,16 @@ if (refresh|forceRefresh) {
   amerData     = get_amer_data(refresh)
   worldData    = get_world_data(refresh)
   newtonData   = get_newton_data() 
-  USnoNYNJ     = region_aggregate( amerData[!grepl( "NY|NJ",                      amerData$state), ],  "US-NewYorkNewJersey") #doesn't sum states without final entries. has hospitalization data 
-  deepBlueState = c("CA", "DC", "HI","MD", "MA","NY","RI","VT")
-  deepRedState  = c("AL", "AK","AR", "ID","KS", "KY", "LA","MS","MT","NE","ND","OK","SC","SD","TN","TX","UT","WV","WY")
-  electoralBlue = c("CA", "NY", "IL", "NJ", "VA", "MA", "MD", "MN", "CO","WA", "CT", "OR", "NV", "NM", "NH", "RI", "DE", "HI", "VT", "ME") 
-  electoralRed  = c("AK", "MT", "ND", "SD", "WY", "ID", "NE", "WV", "AR","IA", "KS", "MS", "UT", "OK", "KY", "LA", "AL", "SC", "MO", "WI", "AZ", "IN", "TN","NC", "GA", "MI", "OH", "PA", "FL", "TX")
+  USnoNYNJ              = region_aggregate( amerData[!grepl( "NY|NJ",                            amerData$state), ],  "US-NewYorkNewJersey") 
+  USStateData           = region_aggregate( amerData[ grepl( paste(electoralAll,  collapse="|"), amerData$state), ],  "USA") #doesn't sum states without final entries. has hospitalization data 
   deepBlueStateData     = region_aggregate( amerData[ grepl( paste(deepBlueState, collapse="|"), amerData$state), ],  "Deep Blue State")
   deepRedStateData      = region_aggregate( amerData[ grepl( paste(deepRedState,  collapse="|"), amerData$state), ],  "Deep _Red State")
-  blueStateData     = region_aggregate( amerData[ grepl( paste(electoralBlue, collapse="|"), amerData$state), ],  "VoteBlueState")
-  redStateData      = region_aggregate( amerData[ grepl( paste(electoralRed,  collapse="|"), amerData$state), ],  "Vote_RedState")
-  #worldData    = worldData[!(worldData$state == "USA"),]#replace international usa data with sum of states + some territories. 
-  #worldData    = rbind(worldData,USStates)
+  blueStateData         = region_aggregate( amerData[ grepl( paste(electoralBlue, collapse="|"), amerData$state), ],  "VoteBlueState")
+  redStateData          = region_aggregate( amerData[ grepl( paste(electoralRed,  collapse="|"), amerData$state), ],  "Vote_RedState")
+  #worldData$state[worldData$state == "USA"]="USA_source2" 
+  worldData = worldData[!worldData$state == "USA",]#replace international usa data with sum of states + some territories. 
+  worldData    = rbind(worldData,USStateData)
   world        = region_aggregate(worldData,"World")
-  allData      = rbind(amerData,worldData,newtonData,world,USnoNYNJ,deepBlueStateData,deepRedStateData,blueStateData,redStateData)
+  allData      = rbind(amerData,worldData,newtonData,world,USnoNYNJ,deepBlueStateData,deepRedStateData,blueStateData,redStateData,USStateData)
   save(amerData,worldData,allData, file = "alldata.RData")}
 if(!runLocal){shinyApp(ui = ui, server = server,  enableBookmarking = "url")} #select all run code for console access to data
