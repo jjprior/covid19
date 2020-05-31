@@ -875,8 +875,7 @@ identify_plot <- function(input){
       if (inputfeature  == "Estimated Cases")  {focusplot = "IFR Multiplier" }
       if (inputfeature  == "Deaths")           {focusplot = "Case Fatality Rate" }
       if (inputfeature == "Hospitalizations")  {focusplot = "Deaths per Hospitalization"}
-      if (aspect == "Incremental") {paste("Incremental",inputfeature)} }
-  
+      if (aspect == "Incremental") {focusplot = paste("Incremental",focusplot)} }
     if (aspect == "All"){ # All Plots
       if (inputfeature == "Tests") {focusplot  = "Total Tests" }
       if (inputfeature == "Cases") {focusplot  = "Total Cases" }
