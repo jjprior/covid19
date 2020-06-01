@@ -26,6 +26,7 @@ caseRankThreshold   = 500 #min # of cases to be included in "ALL" rankings
 deathRankThreshold  = 50  #min # of deaths to be included in "ALL" rankings
 assumedError        = .5  # 30% 3 sigma -- THIS SHOULD BE CODED based on fits eventually. 
 nHotspots           = 6 # number of hot spots in drop down. 
+uMax                = 0.2 #maximum growth rate for hot spot rankings
 plotHeight          = "750px"
 #PlotHeight = "1400px" 
 refState    = "NY"
@@ -202,6 +203,8 @@ project_total_growth_rate <- function(x,s,totfeature,fracfeature,t){
   Xo = tail(X,1)
   ut = uo*exp(k*t)
   uavg = (ut+uo)/2 
+  if (uavg>uMax){uavg = uMax}
+  if (ut>uMax){ut = uMax}
   total_growth = Xo * exp(uavg * t) * ut
   return(total_growth)}
 
@@ -272,13 +275,8 @@ return(x)}
 get_growth       <- function(adata,estate, yffeature, sSocialDist, eSocialDist){
   #get slope, intercept of growth rate slowing fit within social distancing window.
   adata$yf = adata[[yffeature]]
-  sdata   = subset(adata,(state == estate) &(rdate >= sSocialDist) &(rdate <= eSocialDist) )
-  index = !(sdata$yf==0)
-  if (sum(index, na.rm =TRUE )==0) { return(NA) }
-  sdata   = subset(sdata,!is.na(yf) & !(yf==0))
-  if (is.null(sdata)) {return(NA)}
-  
-  fitdata = subset(sdata,(rdate >= sSocialDist) & (rdate<=eSocialDist) & (yf>0))
+  if(!canBeFit(adata,estate,sSocialDist,eSocialDist,yffeature)){return(NA)}
+  fitdata   = adata[indexFit(adata,estate,sSocialDist,eSocialDist,yffeature),]
   model   = lm(log(yf)~mday, data=fitdata)
   return(c(exp(model$coefficients[1]),model$coefficients[2]))}
 
