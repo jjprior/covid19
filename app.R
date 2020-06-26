@@ -25,8 +25,9 @@ projectDays         = 45  #Days to project out for ranking case growth rate
 caseRankThreshold   = 500 #min # of cases to be included in "ALL" rankings
 deathRankThreshold  = 50  #min # of deaths to be included in "ALL" rankings
 assumedError        = .5  # 30% 3 sigma -- THIS SHOULD BE CODED based on fits eventually. 
-nHotspots           = 6 # number of hot spots in drop down. 
+nHotspots           = 5 # number of hot spots in drop down. 
 uMax                = 0.2 #maximum growth rate for hot spot rankings
+sicktime            =21   #assumed length of infection for estimating active cases
 plotHeight          = "750px"
 #PlotHeight = "1400px" 
 refState    = "NY"
@@ -40,14 +41,15 @@ pp   <- function(p1,p2="",p3="",p4=""){if (debugprint == 1){print(paste(p1,p2,p3
 #GET DATA FROM WEB Or DISK--------------------------------------------------------
 get_world_data    = function(refreshData=TRUE){ 
   #Load world data from web, backup load from disk
-  if (refreshData){try({WorldDataCache= fromJSON(txt = "https://opendata.ecdc.europa.eu/covid19/casedistribution/json/")
+  if (refreshData){try({
+    WorldDataCache= fromJSON(txt = "https://opendata.ecdc.europa.eu/covid19/casedistribution/json/")
   saveRDS(WorldDataCache,file="WorldDataCache.Rdu")})} #save for future timeout protection
   x         = readRDS(file="WorldDataCache.Rdu")$records    #fall back to read from disk if timed out
   x$rdate             = parse_date_time(x$dateRep,orders="%d%m%y") 
   x$positiveIncrease  = as.numeric(x$cases)
   x$deathIncrease     = as.numeric(x$deaths)
   x$state             = x$countriesAndTerritories
-  x$pop               = as.numeric(x$popData2018)
+  x$pop               = as.numeric(x$popData2019)
   x$positive          = NA #initialize 
   x$death             = NA
   x            = select(x,rdate,pop,state,positive,positiveIncrease,death,deathIncrease,continentExp) #thin down to needed data
@@ -61,6 +63,8 @@ get_world_data    = function(refreshData=TRUE){
   x$hospIncrease     = NA
   x$test             = NA
   x$testIncrease     = NA
+  x$recovered        = NA
+  x$recoveredIncrease = NA
   x$state[x$state == "Democratic_Republic_of_the_Congo"] = "DRC" #length and menu placement changes
   x$state[x$state == "United_Republic_of_Tanzania"]   = "Tanzania"
   x$state[x$state == "United_States_of_America"]      = "USA"
@@ -86,18 +90,24 @@ get_amer_data     <- function(refreshData=TRUE){
   data$hosp[data$state=="IN"]         = NA  #bad data
   data$hospIncrease[data$state=="IN"] = NA
   data$continentExp = "USA"
-  data        = data[,c("date","positive","death","positiveIncrease","deathIncrease","hospIncrease","hosp","test","state","continentExp")]
+  data        = data[,c("date","positive","death","positiveIncrease","deathIncrease","hospIncrease","hosp","test","state","continentExp","recovered")]
   data$rdate  = parse_date_time(data$date,orders = "%y%m%d")
   spops       = read.csv("statepopstable.csv")  #spreadsheet of state populations
   data$test[data$state=="PR"]  = NA #faulty data
+  data$positiveIncrease[data$state=="MA" & data$positiveIncrease>3600] = NA #retrospective data loading spike
   data               = data[order(data$rdate),]
   data$pop           = NA  #initialize population column
   data$testIncrease  = NA
   for (s in unique(data$state)){  #add population data 
     index                    = (data$state == s)
     data$pop[index]          = get_state_pop(s,spops)  
-    data$testIncrease[index] = calc_daily(data$test[index])}
+    data$testIncrease[index]      = calc_daily(data$test[index])
+    data$recoveredIncrease[index] = calc_daily(data$recovered[index])
+  }
   data        = covid_calc(data)          #Adds calculated fields
+  
+  data$positiveIncrease[data$state=="MA" & data$positiveIncrease>4000] = NA
+  
   data        = subset( data, select = -date ) 
   data        = data[,order(colnames(data))] #order columns for easier rbind match up check
   return(data)}
@@ -128,6 +138,8 @@ get_newton_data   <- function(){ #Get Newton, MA data from disk (ideally from go
     newton$hospIncrease       = NA
     newton$test               = NA
     newton$testIncrease       = NA
+    newton$recovered          = NA
+    newton$recoveredIncrease = NA
     newton$continentExp = "other"
     newton    = covid_calc(newton)
     return(newton)}
@@ -140,11 +152,20 @@ region_aggregate <- function(data,state="World"){ #sum up countries to world or 
   RegiondeathIncrease          = aggregate(deathIncrease~rdate,        data = data, FUN = sum, na.rm =TRUE, na.action = NULL)
   Regiondeath                  = aggregate(death~rdate,                data = data, FUN = sum, na.rm =TRUE, na.action = NULL)
   Regionpop                    = aggregate(pop~rdate,                  data = data, FUN = sum, na.rm =TRUE, na.action = NULL)
+  Regionactive                 = aggregate(active~rdate,              data = data, FUN = sum, na.rm =TRUE, na.action = NULL)
+  RegionactiveIncrease         = aggregate(activeIncrease~rdate,      data = data, FUN = sum, na.rm =TRUE, na.action = NULL)
+  RegiontestIncrease          = aggregate(testIncrease~rdate,      data = data, FUN = sum, na.rm =TRUE, na.action = NULL)
+  Regiontest                  = aggregate(test~rdate,      data = data, FUN = sum, na.rm =TRUE, na.action = NULL)
   Regiondata = merge(Regionpositive, Regiondeath,       by ="rdate", all=T)
   Regiondata = merge(Regiondata,RegionpositiveIncrease, by ="rdate", all=T)
   Regiondata = merge(Regiondata,RegiondeathIncrease,    by ="rdate", all=T)
   Regiondata = merge(Regiondata,Regionpop,              by ="rdate", all=T)
-  if (state=="USA"){
+  Regiondata = merge(Regiondata,Regionactive,           by ="rdate", all=T)
+  Regiondata = merge(Regiondata,RegionactiveIncrease,   by ="rdate", all=T)
+  if (grepl("US States|Blue|Red",state)){
+    print('merging states')
+    Regionrecovered          = aggregate(recovered~rdate,            data = data, FUN = sum, na.rm = TRUE, na.action = NULL)
+    RegionrecoveredIncrease  = aggregate(recoveredIncrease~rdate,    data = data, FUN = sum, na.rm = TRUE, na.action = NULL)
     Regiontest          = aggregate(test~rdate,                   data = data, FUN = sum, na.rm = TRUE, na.action = NULL)
     RegiontestIncrease  = aggregate(testIncrease~rdate,           data = data, FUN = sum, na.rm = TRUE, na.action = NULL)
     Regionhosp          = aggregate(hosp~rdate,                   data = data, FUN = sum, na.rm = TRUE, na.action = NULL)
@@ -153,12 +174,17 @@ region_aggregate <- function(data,state="World"){ #sum up countries to world or 
     Regiondata          = merge(Regiondata,RegionhospIncrease, by ="rdate", all = T)   
     Regiondata          = merge(Regiondata,Regiontest,         by ="rdate", all = T)
     Regiondata          = merge(Regiondata,RegiontestIncrease, by ="rdate", all = T)
-    Regiondata$continentExp = "USA"}
+    Regiondata          = merge(Regiondata,Regionrecovered,    by ="rdate", all=T)
+    Regiondata          = merge(Regiondata,RegionrecoveredIncrease,    by ="rdate", all=T)
+    Regiondata$continentExp = "US States"
+    }
   else
     {Regiondata$test        = NA
     Regiondata$testIncrease = NA
     Regiondata$continentExp = "Aggregated"
     Regiondata$hospIncrease = NA
+    Regiondata$recovered    = NA
+    Regiondata$recoveredIncrease = NA
     Regiondata$hosp         = NA}
   Regiondata$state = state
   Regiondata       = covid_calc(Regiondata)
@@ -208,6 +234,22 @@ project_total_growth_rate <- function(x,s,totfeature,fracfeature,t){
   total_growth = Xo * exp(uavg * t) * ut
   return(total_growth)}
 
+calc_active1 <- function(positives){
+  #assume 1 state and well behaved
+  active = c(positives[1:sicktime], tail(positives,length(positives)-sicktime)-head(positives,length(positives)-sicktime))
+  return(active)
+}
+
+calc_active <- function(data){
+   for (s in unique(data$state)){
+     index=data$state==s
+     data$active[index]=calc_active1(data$positive[index])  #debating whether to eastimate active using cfr as well. 
+     data$activeIncrease[index] = calc_daily(data$active[index])
+    
+   }
+  return(data)
+}
+  
 covid_calc <- function(x){
   #Add calculated attributes to raw imported data
   x$cfr                 = x$death/x$positive
@@ -220,16 +262,24 @@ covid_calc <- function(x){
   x$dperhIncremental    = x$deathIncrease/x$hospIncrease
   x$fracpos             = x$positive/x$test
   x$fracposIncremental  = x$positiveIncrease/x$testIncrease
+  
+  x$fracrec             =  x$recovered/x$positive
+  x$fracrecIncremental   = x$recoveredIncrease/x$positiveIncrease
+  
   x$fracpoptested       = x$test/x$pop
   x$fracpoptestedIncremental = x$testIncrease/x$pop
   x$positiveIncremental      = x$positiveIncrease/x$testIncrease
   x$deathIncremental         = x$deathIncrease/x$hospIncrease
   x$hospIncremental          = x$hospIncrease/x$positiveIncrease
+   x = calc_active(x) 
+
+   
   x$fracPositiveIncrease     = NA
   x$fracHospIncrease         = NA
   x$fracDeathIncrease        = NA
   x$fracPositiveIncreaseEst  = NA
   x$fracTestIncrease         = NA
+  x$fracRecoveredIncrease    = NA
   x$mday                     = as.numeric(difftime(x$rdate,Sys.Date(),units=c("days"))) #need to regress against days relative to today. 
   x =  x[with(x,order(rdate)),]  
   for (s in unique(x$state)){#calculated day over day growth frac (rates) in cases, etc. 
@@ -239,17 +289,19 @@ covid_calc <- function(x){
     x[index,] = calc_growth_since_last_change(x[index,],"deathIncrease",       "death",       "fracDeathIncrease")
     x[index,] = calc_growth_since_last_change(x[index,],"hospIncrease",        "hosp",        "fracHospIncrease")
     x[index,] = calc_growth_since_last_change(x[index,],"testIncrease",        "test",        "fracTestIncrease")
-  
+    x[index,] = calc_growth_since_last_change(x[index,],"recoveredIncrease",   "recovered",   "fracRecoveredIncrease")
+    
     x$CaseGrowthRateDeclineRate[index]  = growth_rate_decline_rate(x,s,   "positive",   "fracPositiveIncrease")
     x$TestGrowthRateDeclineRate[index]  = growth_rate_decline_rate(x,s,   "test",       "fracTestIncrease")
     x$DeathGrowthRateDeclineRate[index] = growth_rate_decline_rate(x,s,   "death",      "fracDeathIncrease")
     x$HospGrowthRateDeclineRate[index]  = growth_rate_decline_rate(x,s,   "hosp",       "fracHospIncrease")
+    x$RecoveredGrowthRateDeclineRate[index]  = growth_rate_decline_rate(x,s,   "recovered",       "fracRecoveredIncrease")
     x$EstCaseGrowthRateDeclineRate[index] =growth_rate_decline_rate(x,s, "PositiveEst","fracPositiveIncreaseEst")
-    
     x$projectedCaseGrowth[index]    = project_total_growth_rate(x,s,   "positive",   "fracPositiveIncrease",projectDays) * 1e6/x$pop[index] #get ppm growth rather than % growth
     x$projectedTestGrowth[index]    = project_total_growth_rate(x,s,   "test",       "fracTestIncrease",projectDays)     * 1e6/x$pop[index]
     x$projectedDeathGrowth[index]   = project_total_growth_rate(x,s,   "death",      "fracDeathIncrease",projectDays)    * 1e6/x$pop[index]
     x$projectedHospGrowth[index]    = project_total_growth_rate(x,s,   "hosp",        "fracHospIncrease",projectDays)     * 1e6/x$pop[index]
+    x$projectedRecoveredGrowth[index]    = project_total_growth_rate(x,s,   "recovered",        "fracRecoveredIncrease",projectDays)     * 1e6/x$pop[index]
     x$projectedEstCaseGrowth[index] = project_total_growth_rate(x,s,   "positiveEst", "fracPositiveIncreaseEst",projectDays)     * 1e6/x$pop[index] }
   x = get_pct_complete(x, 90, Sys.Date()-distwindow, Sys.Date()-1)
   x = x[,order(colnames(x))]
@@ -264,12 +316,16 @@ calc_growth_since_last_change <- function(x,increaseFeature, totalFeature,fracIn
   y  = y[index]
   dy = dy[index]
   t  = t[index]
+  
   yo  = head(c(NA,y), length(y))
   dyo = head(c(NA,dy),length(y))
   to  = head(c(NA,t), length(y))
+  
   gr  = dy/(yo*(t-to))
+  
   x[index, fracIncreaseFeature]  = gr
   x[!index,fracIncreaseFeature]  = NA
+ 
 return(x)}
 
 get_growth       <- function(adata,estate, yffeature, sSocialDist, eSocialDist){
@@ -287,6 +343,7 @@ get_pct_complete <- function(x,  lookahead, sSocialDist, eSocialDist){
   for (s in thestates){
     index= (x$state==s) 
     x$pctPositiveComplete[index]    = x$positive[index]   /  max(-Inf,calc_forecast(x,s,"positive",    "positiveIncrease",    "fracPositiveIncrease",   lookahead,sSocialDist, eSocialDist)$positive)     
+    x$pctActiveComplete[index]    = x$active[index]   /  max(-Inf,calc_forecast(x,s,"active",    "activeIncrease",    "fracActiveIncrease",   lookahead,sSocialDist, eSocialDist)$positive)     
     x$pctDeathComplete[index]       = x$death[index]      /  max(-Inf,calc_forecast(x,s,"death",       "deathIncrease",       "fracDeathIncrease",      lookahead,sSocialDist, eSocialDist)$death)       
     x$pctPositiveEstComplete[index] = x$positiveEst[index]/  max(-Inf, calc_forecast(x,s,"positiveEst", "positiveIncreaseEst", "fracPositiveIncreaseEst",lookahead,sSocialDist, eSocialDist)$positiveEst) 
     x$pctHospComplete[index]        = x$hosp[index]       /  max(-Inf, calc_forecast(x,s,"hosp",        "hospIncrease",        "fracHospIncrease",       lookahead,sSocialDist, eSocialDist)$hosp) }
@@ -372,13 +429,13 @@ ma            <- function(x, n = 7){
   if (length(x)==0) {return(NULL)}
   stats::filter(x, rep(1 / n, n), sides = 2)} #7 day centered moving average
 
-get_hot_spots = function (nowdata){
-  return(c(get_hot_spots_by(nowdata,"projectedEstCaseGrowth",nHotspots),get_hot_spots_by(nowdata,"projectedDeathGrowth",1)))
+get_hot_spots = function (nowdata,numHotspots=4){
+  return(c(get_hot_spots_by(nowdata,"projectedEstCaseGrowth",numHotspots),get_hot_spots_by(nowdata,"projectedDeathGrowth",1)))
 }
 get_hot_spots_by = function(nowdata,sfeature,n){ 
   nowdata$feature = nowdata[[sfeature]]                       #make the summarized feature accessible.   
   nowdata         = nowdata[!is.na(nowdata$feature) & (nowdata$rdate > ( Sys.Date() - 8 ) ) & ( nowdata$rdate < Sys.Date() ), ] # limiit to last week non NA 
-  nowdata         = nowdata[( (nowdata$positive > caseRankThreshold) & (nowdata$death > deathRankThreshold)),]    #limit to major regions
+  nowdata         = nowdata[( (nowdata$positive>caseRankThreshold) & (nowdata$death>deathRankThreshold)),]    #limit to major regions
   nowdata$feature = nowdata$feature 
   nowdata         = nowdata[!is.na(nowdata$feature),]
   nowdata         = select(nowdata,c(state,feature))
@@ -498,6 +555,31 @@ plot_feature        <- function(sdata,feature,ftitle,cstate,plotlog,lookahead,sS
   p = format_legend(p,cstate)
   return(p)}
 
+
+plot_xy        <- function(sdata,xfeature,yfeature, ftitle,cstate,plotlog,lookahead,sSocialDist,eSocialDist,overlay=FALSE){
+  #Plot a feature generically
+  sdata$y = sdata[[yfeature]]
+  sdata$x = sdata[[xfeature]]
+  sdata   = sdata[!is.na(sdata$y)&!is.na(sdata$y),]
+  overlay = length(cstate)>1
+  if (overlay) {sdata$flegend=sdata$state} else {sdata$flegend = feature}
+  sdata   = subset(sdata, grepl(paste(cstate,collapse="|"),state) & !is.na(y) & !is.na(x))
+  if (nrow(sdata)==0){return(plot_unavailable())}  
+  for (s in cstate){
+    sdata$movingAvg[sdata$state==s] = as.numeric(ma(sdata$y[sdata$state==s],7))
+    sdata$movingAvgX[sdata$state==s] = as.numeric(ma(sdata$x[sdata$state==s],7)) }
+  
+  ispct=is_pct_axis(yfeature,"NA")
+  p=ggplot()  
+  
+  if (!overlay){p = p+geom_point(sdata, mapping=aes(x=x,y=y,color=flegend))}
+  p = p + geom_line(data = sdata    , mapping =aes(x = movingAvgX, y = movingAvg, colour = flegend))
+  for (s in cstate){p= p+p_annotate(sdata$movingAvgX[sdata$state==s],sdata$movingAvg[sdata$state==s],plotlog,s)}
+  #p = format_date_plot(p,cstate,ftitle,plotlog,sSocialDist,eSocialDist,ispct)
+  p = format_legend(p,cstate)
+  return(p)}
+
+
 plot_now_summary    <- function(nowdata, focusplot, plotlog, normalize, sfeature, sSocialDist, eSocialDist, nStates = 40, lookahead = NA ){ 
   #plot ranked bar graphs
   nowdata$feature = nowdata[[sfeature]]                       #make the summarized feature accessible.   
@@ -532,7 +614,7 @@ plot_now_summary    <- function(nowdata, focusplot, plotlog, normalize, sfeature
     p = format_bar_plot(p,focusplot,"", plotlog,sSocialDist,eSocialDist,ispct)}
   return(p)}   
 
-plot_trend  <- function(p,pdata,estate,plotlog,totFeature,increaseFeature,fracFeature,flegend,lookahead,sSocialDist,eSocialDist,normalize,daily=FALSE,overlay=FALSE){
+plot_trend  <- function(p,pdata,estate,plotlog,totFeature,increaseFeature,fracFeature,flegend,lookahead,sSocialDist,eSocialDist,normalize,daily=FALSE,overlay=FALSE,mar15){
   pdata$tot      = pdata[[totFeature]]
   pdata$increase = pdata[[increaseFeature]]
   pdata$frac     = pdata[[fracFeature]]
@@ -541,23 +623,45 @@ plot_trend  <- function(p,pdata,estate,plotlog,totFeature,increaseFeature,fracFe
   if (normalize) { pdata$increase = pdata$increase/pdata$pop*1e6}
   if (nrow(pdata) == 0){return(p) }
   
+  if (plotlog){pdata=pdata[pdata$tot>0,]}
+  #if (plotlog){pdata=pdata[pdata$increase>0,]}
   forecast = NULL
   estate=estate[!is.na(estate)]
-  for (s in estate){index                     = (pdata$state==s & !is.na(pdata$increase))
+  p
+  for (s in estate){index = (pdata$state==s & !is.na(pdata$increase))
                      if (is.na(s)){s="missing"} #eu bug?
+                      
                      if (sum(index)>0){
                        pdata$movingAvg[index] = as.numeric(ma(pdata$increase[index],7))
-                       temp                   = calc_forecast(pdata,s,"tot"   ,"increase"   ,"frac",   lookahead,sSocialDist,eSocialDist)
-                  
+                       if (!totFeature=="active"){ 
+                         temp  = calc_forecast(pdata,s,"tot"   ,"increase"   ,"frac",   lookahead,sSocialDist,eSocialDist)}
+                       else{
+                         temp =  calc_forecast(pdata,s,"positive","positiveIncrease","fracPositiveIncrease", lookahead,sSocialDist,eSocialDist)
+                         if (!is.null(temp)){
+                            temp$state = s
+                            temp = calc_active(temp)
+                            temp$tot = temp$active
+                            temp$increase = temp$activeIncrease
+                            spop = mean(pdata$pop[index],na.rm=TRUE)
+                            
+                            if (normalize) {temp$tot      = temp$tot/spop  *1e6     }
+                            if (normalize) {temp$increase = temp$increase/spop *1e6}
+                    
+                            }}
+                         
+                       
                        if (!is.null(temp)){temp$state = s
+                                      
                                            forecast   = rbind(forecast,temp)
                                            forecast   = forecast[!is.na(forecast$increase),]}}}
   
-  forecastOK = ( !is.null(forecast) ) & ( sum( !is.na( forecast$tot ) ) > 0 )       
   
+  
+  forecastOK = ( !is.null(forecast) ) & ( sum( !is.na( forecast$tot ) ) > 0 )       
+ 
+ if (!overlay){pdata$flegend    = flegend} else { pdata$flegend    = pdata$state}
   if (forecastOK) {if (!overlay){forecast$flegend = flegend} else {forecast$flegend = forecast$state}
-                                 if (!overlay){pdata$flegend    = flegend} else { pdata$flegend    = pdata$state}
-                                 if ( overlay){forecast         = forecast[forecast$rdate>=(Sys.Date()-3),]}
+                                  if ( overlay){forecast         = forecast[forecast$rdate>=(Sys.Date()-3),]}
 
       #constrain forecasts to not exceed population to avoid blowing up graphs
       if (normalize){forecast$tot[forecast$tot>1e6]=NA
@@ -567,18 +671,22 @@ plot_trend  <- function(p,pdata,estate,plotlog,totFeature,increaseFeature,fracFe
 
   madata = pdata[!is.na(pdata$movingAvg),]
   
+  if (mar15){forecast=forecast[forecast$rdate>ymd("20200315"),]}
   if(!daily){ #cumulative totals
        if (overlay){p = p +  geom_line(data = pdata, mapping =aes(x = rdate,y = tot, colour = flegend)) } #show as line in overlay
             else   {p = p + geom_point(data = pdata, mapping =aes(x = rdate,y = tot, colour = flegend)) }
        p = p + expand_limits(y = max(pdata$tot)*1.05)
        if (forecastOK){
-       if (!overlay){p = p + geom_line(data = forecast,mapping = aes(x = rdate,y = tot, colour = flegend),linetype="dashed") 
-                     p = p + expand_limits(y = max(forecast$tot)*1.05)
-                     p = p + p_annotate(pdata$rdate,    pdata$tot,    plotlog)
-                     p = p + p_annotate(forecast$rdate, forecast$tot, plotlog)}
-       else {for (s in estate){p =  p + p_annotate(forecast$rdate[forecast$state == s],forecast$tot[forecast$state == s],plotlog,s)}}
-       p = p + geom_line(data = forecast,mapping = aes(x = rdate,y = tot, colour = flegend), linetype="dashed") 
-       p = p + expand_limits(y = max(forecast$tot)*1.05)}}
+         if (!overlay){p = p + geom_line(data = forecast,mapping = aes(x = rdate,y = tot, colour = flegend),linetype="dashed") 
+                       p = p + expand_limits(y = max(forecast$tot)*1.05)
+                       p = p + p_annotate(pdata$rdate,    pdata$tot,    plotlog)
+                       p = p + p_annotate(forecast$rdate, forecast$tot, plotlog)}
+         else {for (s in estate){
+                p =  p + p_annotate(forecast$rdate[forecast$state == s],forecast$tot[forecast$state == s],plotlog,s)}}
+                p = p + geom_line(data = forecast,mapping = aes(x = rdate,y = tot, colour = flegend), linetype="dashed") 
+                p = p + expand_limits(y = max(forecast$tot)*1.05)}
+       else {for (s in estate){p = p+p_annotate(pdata$rdate[index],pdata$tot[index],plotlog,s)}
+       }}
   else #daily plot
      { p = p + geom_line(data = madata    , mapping =aes(x = rdate, y = movingAvg, colour = flegend))
        if (!overlay){p = p + geom_point(data = pdata, mapping=aes(x = rdate,y = increase, colour = flegend))
@@ -597,28 +705,50 @@ plot_trend  <- function(p,pdata,estate,plotlog,totFeature,increaseFeature,fracFe
                                      p = p+p_annotate(tail(forecast$rdate[index],1),tail(forecast$increase[index],1),plotlog,s)}}}
     
      #General Plot Attributes for both Total and Daily     
-    if (daily)     {ytitle = "Daily Total"} else {ytitle = "Total"}
-    if (overlay)   {ytitle = paste(ytitle,flegend)                }
+    if (daily)     {ytitle = "Daily Added"} else {ytitle = "Total"}
+    #if (overlay)   {ytitle = paste(ytitle,flegend)                }
+    ytitle = paste(ytitle,flegend)                
     if (normalize) {ytitle = paste( ytitle, "(per million)" )     }    
-    if (!overlay)  {p = p + scale_colour_manual("", breaks = c("Deaths", "Cases", "Hospitalizations", "Est Cases", "Tests"), values = c("red","black", "green","blue", "orange")) 
+    if (!overlay)  {p = p + scale_colour_manual("", breaks = c("Deaths", "Cases", "Hospitalizations", "Est Cases", "Tests","Recovered","Est Active"), values = c("red","black", "green","blue", "orange","pink","cyan")) 
                    gtitle=estate}
     else {gtitle="" }#no title for overlays for now}
     p = format_date_plot(p, gtitle,ytitle, plotlog, sSocialDist, eSocialDist, 0)
     p = format_legend(p,estate)
     return(p)}
 
-plot_total  <- function(data,estate,plotlog,showcase, showdeath, showtest, showhosp, showest, lookahead,sSocialDist,eSocialDist, normalize, daily=FALSE,overlay=FALSE) {
-  #plot total and daily plots for 1 or more attributes - key routine in program.
-  p = ggplot() 
-  if (is.null(estate)){return(p)}
-  if (showcase  == 1) {p = plot_trend(p,data,estate,plotlog,"positive",    "positiveIncrease",    "fracPositiveIncrease",    "Cases",            lookahead,sSocialDist,eSocialDist,normalize,daily,overlay)}
-  if (showest   == 1) {p = plot_trend(p,data,estate,plotlog,"positiveEst", "positiveIncreaseEst", "fracPositiveIncreaseEst", "Est Cases",        lookahead,sSocialDist,eSocialDist,normalize,daily,overlay)}
-  if (showdeath == 1) {p = plot_trend(p,data,estate,plotlog,"death",       "deathIncrease",       "fracDeathIncrease",       "Deaths",           lookahead,sSocialDist,eSocialDist,normalize,daily,overlay)}
-  if (showtest  == 1) {p = plot_trend(p,data,estate,plotlog,"test",         "testIncrease",        "fracTestIncrease",       "Tests",            lookahead,sSocialDist,eSocialDist,normalize,daily,overlay)}
-  if (showhosp  == 1) {p = plot_trend(p,data,estate,plotlog,"hosp",        "hospIncrease",        "fracHospIncrease",        "Hospitalizations", lookahead,sSocialDist,eSocialDist,normalize,daily,overlay)}
+plot_cfr            <- function(data,cstate,plotlog,lookahead,sSocialDist,eSocialDist){
+  #CFR Plot
+  sdata = subset(data,(state == cstate) & !is.na(positive))
+  sdata = sdata[with(sdata,order(rdate)),]
+  sdata$fracposincrease = sdata$fracPositiveIncrease
+  sdata          = subset(sdata,fracposincrease>0) #get rid of trailing flat data
+  cforecast      = calc_forecast(sdata,cstate,"positive"   ,"positiveIncrease"   ,"fracPositiveIncrease",   lookahead,sSocialDist,eSocialDist)
+  dforecast      = calc_forecast(sdata,cstate,"death",      "deathIncrease",      "fracDeathIncrease",      lookahead,sSocialDist,eSocialDist)
+  dforecast$cfr  = dforecast$death/cforecast$positive
+  sdata$flegend     = "data"
+  dforecast$flegend = "forecast"
+  p=ggplot()+
+    geom_point(sdata,    mapping=aes(x=rdate,y=cfr,color=flegend)) +
+  geom_line(dforecast, mapping=aes(x=rdate,y=cfr,color=flegend))
+  p=format_date_plot(p,cstate,"Case Fatality Rate (CFR)",plotlog,sSocialDist,eSocialDist,1)
   return(p)}
 
-plot_growth_original <- function(p,adata,sSocialDist, eSocialDist,lookahead){ 
+
+plot_total  <- function(data,estate,plotlog,showcase, showdeath, showtest, showhosp, showest,showrec, showactive,lookahead,sSocialDist,eSocialDist, normalize, daily=FALSE,overlay=FALSE,mar15=TRUE) {
+  #plot total and daily plots for 1 or more attributes - key routine in program.
+  
+  p = ggplot() #p is additive
+  if (is.null(estate)){return(p)}
+  if (showcase  == 1) {p = plot_trend(p,data,estate,plotlog,"positive",    "positiveIncrease",    "fracPositiveIncrease",    "Cases",            lookahead,sSocialDist,eSocialDist,normalize,daily,overlay,mar15)}
+  if (showest   == 1) {p = plot_trend(p,data,estate,plotlog,"positiveEst", "positiveIncreaseEst", "fracPositiveIncreaseEst", "Est Cases",        lookahead,sSocialDist,eSocialDist,normalize,daily,overlay,mar15)}
+  if (showdeath == 1) {p = plot_trend(p,data,estate,plotlog,"death",       "deathIncrease",       "fracDeathIncrease",       "Deaths",           lookahead,sSocialDist,eSocialDist,normalize,daily,overlay,mar15)}
+  if (showtest  == 1) {p = plot_trend(p,data,estate,plotlog,"test",         "testIncrease",        "fracTestIncrease",       "Tests",            lookahead,sSocialDist,eSocialDist,normalize,daily,overlay,mar15)}
+  if (showhosp  == 1) {p = plot_trend(p,data,estate,plotlog,"hosp",        "hospIncrease",        "fracHospIncrease",        "Hospitalizations", lookahead,sSocialDist,eSocialDist,normalize,daily,overlay,mar15)}
+  if (showactive== 1) {p = plot_trend(p,data,estate,plotlog,"active",      "activeIncrease",        "fracActiveIncrease",   "Est Active",      lookahead,sSocialDist,eSocialDist,normalize,daily,overlay,mar15)}
+  if (showrec  == 1)  {p = plot_trend(p,data,estate,plotlog,"recovered",   "recoveredIncrease",   "fracRecoveredIncrease",   "Recovered",        lookahead,sSocialDist,eSocialDist,normalize,daily,overlay,mar15)}
+  return(p)}
+
+plot_growth_original <- function(p,adata,sSocialDist, eSocialDist,lookahead,mar15){ 
   #Add a gray fit to early social distancing performance.
   if (is.null(adata)| nrow(adata)==0){return(NULL)}
   if (eSocialDist<ymd("20200401")){eSocialDist=ymd("20200401")} #avoid crash with no data
@@ -642,13 +772,19 @@ plot_growth_original <- function(p,adata,sSocialDist, eSocialDist,lookahead){
   newgrowth = exp(predict(model,newdays))
   plotit2   = data.frame(rdate=newdates,mday=newdays,death="NA",yf=newgrowth) 
   plotit2$flegend ="Early Performance"
+  
+  if (mar15){plotit1=plotit1[plotit1$rdate>ymd("20200315"),]}
+  if (mar15){plotit2=plotit2[plotit2$rdate>ymd("20200315"),]}
+  if (mar15){plotit1=plotit1[plotit1$yf>.0001,]}
+  if (mar15){plotit2=plotit2[plotit2$yf>.0001,]}
+  
   annodate     = mid_point(plotit2$rdate,.66)
   annoy        = mid_point(plotit1$yf,   .66)
-  p = p + annotate("text",x = annodate,y = annoy, label = lm_ln_eqn(model),parse=TRUE)
+  #p = p + annotate("text",x = annodate,y = annoy, label = lm_ln_eqn(model),parse=TRUE)
   p = p + geom_point( plotit1,  mapping=aes(x = rdate,y = yf, color = flegend)) +
            geom_line( plotit2,  mapping=aes(x = rdate,y = yf, color = flegend))}
 
-plot_growth          <- function(focusplot, theTotField,thefracField,sdata,gstate,plotlog,lookahead,sSocialDist,eSocialDist, overlay=FALSE){
+plot_growth          <- function(focusplot, theTotField,thefracField,sdata,gstate,plotlog,lookahead,sSocialDist,eSocialDist, overlay=FALSE,mar15){
   #Flattening plots
   sdata$yt = sdata[[theTotField]]
   sdata$yf = sdata[[thefracField]]
@@ -691,7 +827,11 @@ plot_growth          <- function(focusplot, theTotField,thefracField,sdata,gstat
     
       annodate     = mid_point(plotit2$rdate,.66)
       annoy        = mid_point(plotit1$yf,.66)
-    
+      if (mar15){plotit1=plotit1[plotit1$rdate>ymd("20200315"),]}
+      if (mar15){plotit2=plotit2[plotit2$rdate>ymd("20200315"),]}
+      if (mar15){plotit1=plotit1[plotit1$yf>.0001,]}
+      if (mar15){plotit2=plotit2[plotit2$yf>.0001,]}
+      
       p=p + geom_point( adata,    mapping=aes(x = rdate, y = yf ))+
             geom_point( plotit1,  mapping=aes(x = rdate, y = yf, color = flegend))+
             geom_line(  pdata,    mapping=aes(x = rdate, y = movingAvg, color = flegend))+
@@ -699,7 +839,7 @@ plot_growth          <- function(focusplot, theTotField,thefracField,sdata,gstat
       
       p = p + annotate("text",x = annodate,y = annoy, label = lm_ln_eqn(model),parse=TRUE)
       ptitle = paste(gstate," ",round(model$coeff[2]*100,1),'% per day',sep="")
-      p      = plot_growth_original(p,adata,ymd("20200324"),sSocialDist,lookahead)
+      p      = plot_growth_original(p,adata,ymd("20200324"),sSocialDist,lookahead,mar15)
       p     = p+ scale_colour_manual("", breaks = c("Early Performance", "Fitted", "Data", "Mov Avg"),values = c("grey",    "red", "black","blue"))
     }
     
@@ -732,9 +872,11 @@ generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSo
     if (input$scope == "Custom")  {
       estate = input$cregion
       if (estate == "IR BE FR MA")       {estate=c("Ireland","Belgium","France","MA")}
-      else if (estate == "Red vs. Blue") {estate=c("Deep _Red State","Deep Blue State")}
+      else if (estate == "Deep Red vs. Deep Blue") {estate=c("Deep _Red State","Deep Blue State")}
       else if (estate == "Blue States")  {estate= electoralBlue}
+      else if (estate == "Deep Blue States")  {estate= deepBlueState}
       else if (estate == "Red States")   {estate =electoralRed}
+      else if (estate == "Deep Red States")   {estate =deepRedState}
       else if (estate == "All States")   {estate = electoralAll}
       else if (estate == "Flattening Spectrum"){estate = c("Brazil","China","Russia","South_Korea","Switzerland","Germany","Iceland","USA","Croatia", "Sweden","Deep _Red State","Deep Blue State","Chile")}
       else if (estate == "Europe")       {estate= unique(allData$state[allData$continentExp=="Europe" ])}
@@ -742,6 +884,7 @@ generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSo
       else if (estate == "Oceania")      {estate= unique(allData$state[allData$continentExp=="Oceania"])}
       else if (estate == "Asia")         {estate= unique(allData$state[allData$continentExp=="Asia"   ])}
       else if (estate == "Africa")       {estate= unique(allData$state[allData$continentExp=="Africa" ])}
+      else if (estate == "Newton vs.")   {estate= c("Newton","MA","USA","World","Deep _Red State","Deep Blue State")}
       else if (estate == "All Countries"){estate= unique(worldData$state)}
       data = allData[grepl(paste(estate,collapse = "|"),allData$state),]}
   }) #catch bad old hyperlinks with try
@@ -752,65 +895,87 @@ generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSo
   else                      {if (input$scope=="World") { inputfeature=input$featureRanking} else {inputfeature=input$featureRankingUSA}}
   if (overlay & (inputfeature == "All"))   {return(plot_unavailable("for 'all' aspects for 2+ regions"))}
   if ((input$aspect == "CFR etc") & (inputfeature=="All"))   {return(plot_unavailable("for 'all' except daily/total"))}
-  if ( grepl(paste( input$options, collapse = "|"), "march1"))  { data = data[data$rdate >= ymd("20200315"),]}
+  mar15 = grepl(paste( input$options, collapse = "|"), "march1")
+  if (mar15)  { data = data[data$rdate >= ymd("20200315"),]}
   
   daily=FALSE
   showhosp = 0
   showest  = 0 
   showtest = 0 
-  if (focusplot == "Total Tests")           {return(plot_total(data,estate,plotlog,0,0,1      , showhosp,showest,lookahead,sSocialDist,eSocialDist,normalize,daily,overlay))}
-  if (focusplot == "Total Cases")           {return(plot_total(data,estate,plotlog,1,0,showtest, showhosp,showest,lookahead,sSocialDist,eSocialDist,normalize,daily,overlay))}
-  if (focusplot == "Total Deaths")          {return(plot_total(data,estate,plotlog,0,1,showtest, showhosp,showest,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
-  if (focusplot == "Total Est Cases")       {return(plot_total(data,estate,plotlog,0,0,showtest,showhosp,      1,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
-  if (focusplot == "Total Hospitalizations"){return(plot_total(data,estate,plotlog,0,0,showtest,1        ,showest,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
-  if (focusplot == "Total All")             {return(plot_total(data,estate,plotlog,1,1,1,       1       ,1      ,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
+  showrec = 0 
+  showactive=0
+  showpositive = 0 
+  showdeath = 0 
   
-  if (focusplot == "%Complete Tests")           {return(plot_total(data,estate,plotlog,0,0,1      , showhosp,showest,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
-  if (focusplot == "%Complete Cases")           {return(plot_total(data,estate,plotlog,1,0,showtest, showhosp,showest,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
-  if (focusplot == "%Complete Deaths")          {return(plot_total(data,estate,plotlog,0,1,showtest, showhosp,showest,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
-  if (focusplot == "%Complete Est Cases")       {return(plot_total(data,estate,plotlog,0,0,showtest,showhosp,      1,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
-  if (focusplot == "%Complete Hospitalizations"){return(plot_total(data,estate,plotlog,0,0,showtest,1        ,showest,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
-  if (focusplot == "%Complete All")             {return(plot_total(data,estate,plotlog,1,1,1,       1       ,1      ,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
+  pp("plotting",focusplot)
+  if (focusplot == "Total Tests")           {return(plot_total(data,estate,plotlog,showpositive,showdeath,1      , showhosp,showest,showrec,showactive,lookahead,sSocialDist,eSocialDist,normalize,daily,overlay))}
+  if (focusplot == "Total Cases")           {return(plot_total(data,estate,plotlog,1,0,                  showtest, showhosp,showest,showrec,showactive,lookahead,sSocialDist,eSocialDist,normalize,daily,overlay))}
+  if (focusplot == "Total Deaths")          {return(plot_total(data,estate,plotlog,0,1,showtest, showhosp,showest,showrec,showactive,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
+  if (focusplot == "Total Est Cases")       {return(plot_total(data,estate,plotlog,0,0,showtest,showhosp,      1,showrec,showactive,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
+  if (focusplot == "Total Hospitalizations"){return(plot_total(data,estate,plotlog,0,0,showtest,1        ,showest,showrec,showactive,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
+  if (focusplot == "Total Recovered")       {return(plot_total(data,estate,plotlog,0,0,showtest, showhosp,showest,       1,showactive,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
+  if (focusplot == "Total All")             {return(plot_total(data,estate,plotlog,1,1,       1,        1,      1,showrec, showactive, lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
+  
+  
+  if (focusplot == "%Complete Tests")           {return(plot_total(data,estate,plotlog,0,0,1      , showhosp,showest,showrec,showactive,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
+  if (focusplot == "%Complete Cases")           {return(plot_total(data,estate,plotlog,1,0,showtest, showhosp,showest,showrec,showactive,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
+  if (focusplot == "%Complete Deaths")          {return(plot_total(data,estate,plotlog,0,1,showtest, showhosp,showest,showrec,showactive,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
+  if (focusplot == "%Complete Est Cases")       {return(plot_total(data,estate,plotlog,0,0,showtest,showhosp,      1,showrec,showactive,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
+  if (focusplot == "%Complete Hospitalizations"){return(plot_total(data,estate,plotlog,0,0,showtest,       1, showest,showrec,showactive,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
+  if (focusplot == "%Complete All")             {return(plot_total(data,estate,plotlog,1,1,       1,       1,      1,       0,         0, lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
   
   daily = TRUE
-  if (focusplot == "Daily Cases")             {return(plot_total(data,estate,plotlog,1,0,0,showhosp,0,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
-  if (focusplot == "Daily Tests")             {return(plot_total(data,estate,plotlog,0,0,1,showhosp,0,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
-  if (focusplot == "Daily Deaths")            {return(plot_total(data,estate,plotlog,0,1,0,showhosp,0,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
-  if (focusplot == "Daily Hospitalizations")  {return(plot_total(data,estate,plotlog,0,0,0,1       ,0,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
-  if (focusplot == "Daily Est Cases")         {return(plot_total(data,estate,plotlog,0,0,0,showhosp,1,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
-  if (focusplot == "Daily All")               {return(plot_total(data,estate,plotlog,1,1,1,1       ,1,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
+  if (focusplot == "Daily Cases")             {return(plot_total(data,estate,plotlog,1,0,0,showhosp,showest, showrec,showactive,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
+  if (focusplot == "Daily Est Active")        {return(plot_total(data,estate,plotlog,0,0,0,showhosp,showest, showrec,1         ,lookahead,sSocialDist,eSocialDist,normalize,FALSE, overlay))} #show active as a daily
+  if (focusplot == "Daily Tests")             {return(plot_total(data,estate,plotlog,0,0,1,showhosp,showest, showrec,showactive,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
+  if (focusplot == "Daily Deaths")            {return(plot_total(data,estate,plotlog,0,1,0,showhosp,showest, showrec,showactive,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
+  if (focusplot == "Daily Hospitalizations")  {return(plot_total(data,estate,plotlog,0,0,0,1       ,showest, showrec,showactive,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
+  if (focusplot == "Daily Est Cases")         {return(plot_total(data,estate,plotlog,0,0,0,showhosp,1  ,showrec,showactive  ,lookahead,sSocialDist,eSocialDist,normalize,daily,overlay))}
+                                          
+  if (focusplot == "Daily Recovered")         {return(plot_total(data,estate,plotlog,0,0,0,showhosp,showrec,1,showactive,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
+  if (focusplot == "Daily All")               {return(plot_total(data,estate,plotlog,1,1,1,1       ,1,1,1,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
+  if (focusplot == "Daily All")               {return(plot_total(data,estate,plotlog,1,1,1,1       ,0,0,0,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
   
-  if (focusplot == "Flattening Tests")            {return(plot_growth(focusplot,"test"                  ,"fracTestIncrease",data,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}
-  if (focusplot == "Flattening Cases")            {return(plot_growth(focusplot,"positive"              ,"fracPositiveIncrease",data,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}
-  if (focusplot == "Flattening Deaths")           {return(plot_growth(focusplot,"death"                 ,"fracDeathIncrease",   data,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}
-  if (focusplot == "Flattening Hospitalizations") {return(plot_growth(focusplot,"hosp"                  ,"fracHospIncrease",    data,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}
-  if (focusplot == "Flattening Est Cases" )       {return(plot_growth(focusplot,"positiveEst"           ,"fracPositiveIncreaseEst",data,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}
+  if (focusplot == "Flattening Tests")            {return(plot_growth(focusplot,"test"                  ,"fracTestIncrease",data,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay,mar15))}
+  if (focusplot == "Flattening Cases")            {return(plot_growth(focusplot,"positive"              ,"fracPositiveIncrease",data,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay,mar15))}
+  if (focusplot == "Flattening Deaths")           {return(plot_growth(focusplot,"death"                 ,"fracDeathIncrease",   data,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay,mar15))}
+  if (focusplot == "Flattening Hospitalizations") {return(plot_growth(focusplot,"hosp"                  ,"fracHospIncrease",    data,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay,mar15))}
+  if (focusplot == "Flattening Est Cases" )       {return(plot_growth(focusplot,"positiveEst"           ,"fracPositiveIncreaseEst",data,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay,mar15))}
+  if (focusplot == "Flattening Est Active" )       {return(plot_growth(focusplot,"active"               ,"fracActiveIncrease",     data,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay,mar15))}
   
-  if (focusplot == "Growth (/million) Tests")            {return(plot_total(data,estate,plotlog,0,0,1      , showhosp,showest,lookahead,sSocialDist,eSocialDist,normalize,daily,overlay))}
-  if (focusplot == "Growth (/million) Cases")            {return(plot_total(data,estate,plotlog,1,0,showtest, showhosp,showest,lookahead,sSocialDist,eSocialDist,normalize,daily,overlay))}
-  if (focusplot == "Growth (/million) Deaths")           {return(plot_total(data,estate,plotlog,0,1,showtest, showhosp,showest,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
-  if (focusplot == "Growth (/million) Est Cases")        {return(plot_total(data,estate,plotlog,0,0,showtest,showhosp,      1,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
-  if (focusplot == "Growth (/million) Hospitalizations") {return(plot_total(data,estate,plotlog,0,0,showtest,1        ,showest,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
-  if (focusplot == "Growth (/million) All")              {return(plot_total(data,estate,plotlog,1,1,1,       1       ,1      ,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
+  if (focusplot == "Growth (/million) Tests")            {return(plot_total(data,estate,plotlog,0,0,1      , showhosp,showest,showrec,showactive,lookahead,sSocialDist,eSocialDist,normalize,daily,overlay))}
+  if (focusplot == "Growth (/million) Cases")            {return(plot_total(data,estate,plotlog,1,0,showtest, showhosp,showest,showrec,showactive,lookahead,sSocialDist,eSocialDist,normalize,daily,overlay))}
+  if (focusplot == "Growth (/million) Deaths")           {return(plot_total(data,estate,plotlog,0,1,showtest, showhosp,showest,showrec,showactive,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
+  if (focusplot == "Growth (/million) Est Cases")        {return(plot_total(data,estate,plotlog,0,0,showtest,showhosp,        1, showrec,showactive,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
+  if (focusplot == "Growth (/million) Hospitalizations") {return(plot_total(data,estate,plotlog,0,0,showtest,        1 , showest, showrec,showactive,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
+  if (focusplot == "Growth (/million) All")              {return(plot_total(data,estate,plotlog,1,1,       1,        1 ,      1,                   1, lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
   
+  
+ #if (focusplot== "Case Fatality Rate") {           return(plot_cfr(    data,                 estate,plotlog,lookahead,sSocialDist,eSocialDist))}
   if (focusplot == "Case Fatality Rate")           {return(plot_feature(data,"cfr",           focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}
   if (focusplot == "% Positive")                   {return(plot_feature(data,"fracpos",       focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}
   if (focusplot == "% Pop Tested")                 {return(plot_feature(data,"fracpoptested", focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}
   if (focusplot == "Deaths per Hospitalization")   {return(plot_feature(data,"dperh",         focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}
   if (focusplot == "IFR Multiplier")               {return(plot_feature(data,"ifrRatio",      focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,""))}
+  if (focusplot == "% Recovered")                  {return(plot_feature(data,"fracrec",      focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,""))}
+                                                                
+  #if (focusplot == "CFR Evolution")                  {return(plot_xy(data,"positive" ,"cfr",focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}
   
   if (focusplot == "Incremental Case Fatality Rate")     {return(plot_feature(data,"cfrIncremental",       focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}     
   if (focusplot == "Incremental % Positive")             {return(plot_feature(data,"fracposIncremental",       focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}
   if (focusplot == "Incremental % Pop Tested")                 {return(plot_feature(data,"fracpoptestedIncremental", focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}#not needed?
   if (focusplot == "Incremental Deaths per Hospitalization")   {return(plot_feature(data,"dperhIncremental",         focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}
   if (focusplot == "Incremental IFR Multiplier")               {return(plot_feature(data,"ifrRatioIncremental",      focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist))}
+  if (focusplot == "Incremental % Recovered")                  {return(plot_feature(data,"fracrecIncremental",      focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,""))}
   
   #Top/Bottom Summaries 
   if (focusplot == "Total Tests Summary")            { return(plot_now_summary(data,focusplot,plotlog,normalize,"test",     sSocialDist,eSocialDist,nStates) )}
+  if (focusplot == "Total Estimated Active Summary")            { return(plot_now_summary(data,focusplot,plotlog,normalize,"active",     sSocialDist,eSocialDist,nStates) )}
   if (focusplot == "Total Cases Summary")            { return(plot_now_summary(data,focusplot,plotlog,normalize,"positive", sSocialDist,eSocialDist,nStates) )}
   if (focusplot == "Total Deaths Summary")           { return(plot_now_summary(data,focusplot,plotlog,normalize,"death",    sSocialDist,eSocialDist,nStates) )}
   if (focusplot == "Total Hospitalizations Summary") { return(plot_now_summary(data,focusplot,plotlog,normalize,"hosp",sSocialDist,eSocialDist,nStates) )}
   if (focusplot == "Total Est Cases Summary")        { return(plot_now_summary(data,focusplot,plotlog,normalize,"positiveEst",sSocialDist,eSocialDist,nStates) )}
+  if (focusplot == "Total Recovered Summary")        { return(plot_now_summary(data,focusplot,plotlog,normalize,"recovered",sSocialDist,eSocialDist,nStates) )}
   
   if (focusplot == "%Complete Cases Summary")            { return(plot_now_summary(data,focusplot,plotlog,normalize,"pctPositiveComplete", sSocialDist,eSocialDist,nStates) )}
   if (focusplot == "%Complete Deaths Summary")           { return(plot_now_summary(data,focusplot,plotlog,normalize,"pctDeathComplete",    sSocialDist,eSocialDist,nStates) )}
@@ -822,8 +987,10 @@ generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSo
   if (focusplot == "Daily Deaths Summary")           { return(plot_now_summary(data,focusplot,plotlog,normalize,"deathIncrease",sSocialDist,eSocialDist,nStates) )}
   if (focusplot == "Daily Hospitalizations Summary") { return(plot_now_summary(data,focusplot,plotlog,normalize,"hospIncrease",sSocialDist,eSocialDist,nStates) )}
   if (focusplot == "Daily Est Cases Summary")        { return(plot_now_summary(data,focusplot,plotlog,normalize,"positiveIncreaseEst",sSocialDist,eSocialDist,nStates) )}
+  if (focusplot == "Daily Recovered Summary")        { return(plot_now_summary(data,focusplot,plotlog,normalize,"recoveredIncrease",sSocialDist,eSocialDist,nStates) )}
   
   if (focusplot == "% Positive Summary")                 { return(plot_now_summary(data,focusplot,plotlog,normalize,"fracpos",            sSocialDist,eSocialDist,nStates) )}
+  if (focusplot == "% Recovered Summary")                 { return(plot_now_summary(data,focusplot,plotlog,normalize,"fracrec",            sSocialDist,eSocialDist,nStates) )}
   if (focusplot == "% Pop Tested Summary")               { return(plot_now_summary(data,focusplot,plotlog,0,"fracpoptested",          sSocialDist,eSocialDist,nStates) )}
   if (focusplot == "Case Fatality Rate Summary")         { return(plot_now_summary(data,focusplot,plotlog,0,"cfr",          sSocialDist,eSocialDist,nStates) )}
   if (focusplot == "IFR Multiplier Summary")             { return(plot_now_summary(data,focusplot,plotlog,0,"ifrRatio",     sSocialDist,eSocialDist,nStates) )}
@@ -850,6 +1017,7 @@ generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSo
   return(plot_unavailable())} # if nothing matched
 
 namePlot      <- function(input){
+  print(input$aspectRanking)
   #general naming based on inputs
   if (input$mode=="Rankings") {aspect       = input$aspectRanking } else { aspect = input$aspect}
   if (input$mode=="Trends"){ if (input$scope=="World") { inputfeature=input$feature}        else {inputfeature=input$featureUSA} }
@@ -857,22 +1025,25 @@ namePlot      <- function(input){
   pname = paste(aspect, inputfeature) 
   pname = str_replace(pname,"Hot","Growth (/million)")
   pname = str_replace(pname,"Estimated","Est")
+  #pname = str_replace(pname,"Active","Est Active")
   return(pname)}
 
 identify_plot <- function(input){
   #pick plot based on UI choices
-  if (input$mode=="Ranking") {aspect       = input$aspectRanking } else { aspect=input$aspect}
+  if (input$mode=="Rankings") {aspect       = input$aspectRanking } else { aspect=input$aspect}
   if (input$mode=="Trends"){ if (input$scope=="World") { inputfeature=input$feature}        else {inputfeature=input$featureUSA} }
   else                      {if (input$scope=="World") { inputfeature=input$featureRanking} else {inputfeature=input$featureRankingUSA}}
   
   focusplot = namePlot(input) #default nameing
   #ratio reports
+  pp("aspect",aspect)
     if (aspect == "CFR etc" | aspect=="Incremental"){
       if (inputfeature  == "Tests")            {focusplot = "% Pop Tested" }
       if (inputfeature  == "Cases")            {focusplot = "% Positive" }
       if (inputfeature  == "Estimated Cases")  {focusplot = "IFR Multiplier" }
       if (inputfeature  == "Deaths")           {focusplot = "Case Fatality Rate" }
       if (inputfeature == "Hospitalizations")  {focusplot = "Deaths per Hospitalization"}
+      if (inputfeature == "Recovered")         {focusplot = "% Recovered"}
       if (aspect == "Incremental") {focusplot = paste("Incremental",focusplot)} }
     if (aspect == "All"){ # All Plots
       if (inputfeature == "Tests") {focusplot  = "Total Tests" }
@@ -880,6 +1051,7 @@ identify_plot <- function(input){
       if (inputfeature == "Estimated Cases"){focusplot =  "Total Est Cases"}
       if (inputfeature == "Deaths"){focusplot =  "Total Deaths" }
       if (inputfeature == "Hospitalizations") {focusplot =  "Total Hospitalizations" }
+      if (inputfeature == "Recovered") {focusplot =  "Total Recovered" }
       if (inputfeature == "All"){ if (aspect == "Total")      {focusplot=   "Total All" }
                                   if (aspect == "Daily")      {focusplot=   "Daily All"  }
                                   if (aspect == "Flattening") {focusplot=   "NA" }
@@ -902,7 +1074,7 @@ ui     <- function(request){
   ccFun =  function(){unique(customData$state)}
   rcFun =  function(){unique(allData$state)}
   
-  customFun = function() {return(c(c("IR BE FR MA"),c("Flattening Spectrum"), c("Red vs. Blue"),c("Red States"),c("Blue States"),c("All States"),c("Europe"),c("America"),c("Africa"),c("Asia"),c("Oceania"), c("All Countries")))}
+  customFun = function() {return(c(c("IR BE FR MA"),c("Flattening Spectrum"), c("Deep Red vs. Deep Blue"),c("Red States"), c("Deep Red States"), c("Blue States"), c("Deep Blue States"), c("All States"),c("Europe"),c("Americas"),c("Africa"),c("Asia"),c("Oceania"), c("All Countries"), c("Newton vs.")))}
   fluidPage(
     titlePanel("Covid-19 Data & Forecasts"),
     sidebarLayout(
@@ -924,17 +1096,17 @@ ui     <- function(request){
         conditionalPanel(condition = "(input.scope == 'Custom')",                                        selectInput("cregion",  'Select Custom Dataset',         customFun(), multiple=FALSE, selected = c("All States"))),
         checkboxInput("hotspots",    "Focus on Hot Spots", TRUE),
         
-        conditionalPanel( condition = "input.mode  == 'Trends' & input.scope == 'World'", radioButtons("feature", "What Aspect?",           c("Cases", "Deaths",  "Estimated Cases",                             "All"), selected = "Cases",inline=TRUE)),
-        conditionalPanel( condition = "input.mode  == 'Trends' & input.scope !== 'World'", radioButtons("featureUSA", "What Aspect?",        c("Cases", "Deaths",  "Estimated Cases", "Tests","Hospitalizations", "All"), selected = "Cases",inline=TRUE)),
-        conditionalPanel( condition = "input.mode !== 'Trends' & input.scope == 'World'", radioButtons("featureRanking", "What Aspect?",    c("Cases", "Deaths",  "Estimated Cases"                                   ), selected = "Cases",inline=TRUE)), 
-        conditionalPanel( condition = "input.mode !== 'Trends' & input.scope  !== 'World'", radioButtons("featureRankingUSA", "What Aspect?", c("Cases", "Deaths",  "Estimated Cases", "Tests","Hospitalizations"       ), selected = "Cases",inline=TRUE)),                     
+        conditionalPanel( condition = "input.mode  == 'Trends' & input.scope == 'World'", radioButtons("feature", "What Aspect?",           c("Cases", "Deaths",   "Estimated Cases", "Estimated Active",                             "All"), selected = "Cases",inline=TRUE)),
+        conditionalPanel( condition = "input.mode  == 'Trends' & input.scope !== 'World'", radioButtons("featureUSA", "What Aspect?",        c("Cases", "Deaths",  "Estimated Cases", "Estimated Active", "Tests","Hospitalizations",  "All"), selected = "Cases",inline=TRUE)),
+        conditionalPanel( condition = "input.mode !== 'Trends' & input.scope == 'World'", radioButtons("featureRanking", "What Aspect?",    c("Cases", "Deaths",   "Estimated Cases", "Estimated Active"                                   ), selected = "Cases",inline=TRUE)), 
+        conditionalPanel( condition = "input.mode !== 'Trends' & input.scope  !== 'World'", radioButtons("featureRankingUSA", "What Aspect?", c("Cases", "Deaths", "Estimated Cases", "Estimated Active", "Tests","Hospitalizations"), selected = "Cases",inline=TRUE)),                     
                          
         conditionalPanel(condition = "input.mode  == 'Trends'",  radioButtons("aspect",  "What Dimension?",c("Total","Daily","Flattening", "CFR etc","Incremental"),  selected = "Daily",inline=TRUE) ),
         conditionalPanel(condition = "input.mode !== 'Trends' ", radioButtons("aspectRanking",  "What Dimension?", c("Total","Daily","Flattening", "Hot", "%Complete", "CFR etc","Incremental"), selected = "Daily",inline=TRUE)),
                                               
         checkboxGroupInput('options',"Options",choices=c("LogY"="log","/mil"="normalize","15Mar-"="march1"),selected=c("normalize","march1"), inline=TRUE),
-        sliderInput("look", "What Forecast Horizon?",    min = Sys.Date()+4,            max = Sys.Date()+maxforecastdays, value = floor_date(Sys.Date()+defaultforecastdays,"month")),
-        sliderInput("sdw",  "What Data for Model",       min = Sys.Date()-3*distwindow, max = Sys.Date()-1,               value = c(as.Date(as.Date(Sys.Date()-distwindow)),as.Date(Sys.Date()-1),round=TRUE,dragRange=FALSE))
+        sliderInput("look", "What Forecast Horizon?",    min = Sys.Date()+7,            max = Sys.Date()+maxforecastdays, value = floor_date(Sys.Date()+defaultforecastdays,"month")),
+        sliderInput("sdw",  "What Data for Model",       min = ymd("20200301"), max = Sys.Date(),               value = c(as.Date(as.Date(Sys.Date()-distwindow)),as.Date(Sys.Date()-1),round=TRUE,dragRange=FALSE))
         ),
       mainPanel(  uiOutput("plot.ui"))
       ))}
@@ -947,18 +1119,23 @@ try({load("alldata.RData" )
 if (refresh|forceRefresh) {
   pp("reloading data")
   amerData     = get_amer_data(refresh)
+  pp("getting world data")
   worldData    = get_world_data(refresh)
   newtonData   = get_newton_data() 
   USnoNYNJ              = region_aggregate( amerData[!grepl( "NY|NJ",                            amerData$state), ],  "US-NewYorkNewJersey") 
-  USStateData           = region_aggregate( amerData[ grepl( paste(electoralAll,  collapse="|"), amerData$state), ],  "USA") #doesn't sum states without final entries. has hospitalization data 
+  USStateData           = region_aggregate( amerData[ grepl( paste(electoralAll,  collapse="|"), amerData$state), ],  "US States") #doesn't sum states without final entries. has hospitalization data 
   deepBlueStateData     = region_aggregate( amerData[ grepl( paste(deepBlueState, collapse="|"), amerData$state), ],  "Deep Blue State")
   deepRedStateData      = region_aggregate( amerData[ grepl( paste(deepRedState,  collapse="|"), amerData$state), ],  "Deep _Red State")
   blueStateData         = region_aggregate( amerData[ grepl( paste(electoralBlue, collapse="|"), amerData$state), ],  "VoteBlueState")
   redStateData          = region_aggregate( amerData[ grepl( paste(electoralRed,  collapse="|"), amerData$state), ],  "Vote_RedState")
+  early_M_A             = amerData[amerData$state=="MA"&amerData$rdate<ymd("20200422"),] 
+  early_M_A$state="early_M_A"
+  USStateData$state = "US States"
   #worldData$state[worldData$state == "USA"]="USA_source2" 
-  worldData = worldData[!worldData$state == "USA",]#replace international usa data with sum of states + some territories. 
-  worldData    = rbind(worldData,USStateData)
+  #worldData = worldData[!worldData$state == "USA",]#replace international usa data with sum of states + some territories. 
+  #worldData    = rbind(worldData,USStateData)
   world        = region_aggregate(worldData,"World")
-  allData      = rbind(amerData,worldData,newtonData,world,USnoNYNJ,deepBlueStateData,deepRedStateData,blueStateData,redStateData,USStateData)
+  #allData      = rbind(amerData,worldData,newtonData,world,USnoNYNJ,deepBlueStateData,deepRedStateData,blueStateData,redStateData,USStateData)
+  allData      = rbind(amerData,worldData,newtonData,world,USnoNYNJ,deepBlueStateData,deepRedStateData,blueStateData,redStateData,early_M_A,USStateData)
   save(amerData,worldData,allData, file = "alldata.RData")}
 if(!runLocal){shinyApp(ui = ui, server = server,  enableBookmarking = "url")} #select all run code for console access to data
