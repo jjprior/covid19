@@ -15,7 +15,7 @@ shhh(library(reshape2))
 # set some global values for program-----------
 options(warn = 1, scipen = 999)#no scientific notation in plots
 forceRefresh       = FALSE #Uncomment to force reload of data from web
-#forceRefresh       = TRUE #Uncomment to force reload of data from web -- remember need refresh if  CODE changed!!!
+forceRefresh       = TRUE #Uncomment to force reload of data from web -- remember need refresh if  CODE changed!!!
 debugprint          = 1   #set = 1 for pp(txt,var) debug printing
 lookback            = 50  #how far back model show plot model on top of data
 distwindow          = 15 #how far back for default social distancing window
@@ -46,21 +46,23 @@ get_world_data = function(refreshData=TRUE){
   if (refreshData){
     try({
     worldcols = cols(
-      .default = col_double(),
-      iso_code = col_character(),
-      continent = col_character(),
-      location = col_character(),
-      date = col_date(format = "YMD"),
-      icu_patients = col_logical(),
-      icu_patients_per_million = col_logical(),
-      hosp_patients = col_logical(),
-      hosp_patients_per_million = col_logical(),
-      weekly_icu_admissions = col_logical(),
-      weekly_icu_admissions_per_million = col_logical(),
-      weekly_hosp_admissions = col_logical(),
-      weekly_hosp_admissions_per_million = col_logical(),
-      tests_units = col_character())
+        .default = col_double(),
+        iso_code = col_character(),
+        continent = col_character(),
+        location = col_character(),
+        date = col_date(format = ""),
+        icu_patients = col_logical(),
+        icu_patients_per_million = col_logical(),
+        hosp_patients = col_logical(),
+        hosp_patients_per_million = col_logical(),
+        weekly_icu_admissions = col_logical(),
+        weekly_icu_admissions_per_million = col_logical(),
+        weekly_hosp_admissions = col_logical(),
+        weekly_hosp_admissions_per_million = col_logical(),
+        tests_units = col_character()   )
+    
     worlddata = read_csv("https://covid.ourworldindata.org/data/owid-covid-data.csv",col_types=worldcols)
+    
     saveRDS(worlddata,"worlddata.Rdu")
     
     vaxcols= cols(
@@ -90,7 +92,7 @@ get_world_data = function(refreshData=TRUE){
   ##Load World Data Cache
   print("loading world data cache")
   x    = readRDS(file="worlddata.Rdu")
-  x     = data %>% select(date,location, total_cases, total_deaths)
+  x     = x %>% select(date,location, total_cases, total_deaths)
   print("selected")
   x$date = parse_date_time(x$date,"ymd")
   colnames(x)= c("rdate","state","positive","death")
