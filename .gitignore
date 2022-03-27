@@ -1,3 +1,6 @@
 covid19.Rproj
 .DS_Store
 .Rproj.user
+.Rhistory
+rsconnect
+covid19code.dcf
