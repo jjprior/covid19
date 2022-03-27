@@ -12,6 +12,7 @@ shhh(library(shiny))
 shhh(library(scales))
 shhh(library(tidyverse))
 shhh(library(reshape2))
+shhh(library(plotly))
 # set some global values for program-----------
 options(warn = 1, scipen = 999)#no scientific notation in plots
 forceRefresh       = FALSE #Uncomment to force reload of data from web
@@ -1146,8 +1147,8 @@ identify_plot <- function(input){
 #UI and Server for Shiny------------------------------------------
 server <- function(input, output, session){ 
   #Shiny Server. Plot0 is main plot, Plots1-4 are for "all" reports, 5-6 where for comparisions
-  output$Plot0 <- renderPlot(generate_plot(identify_plot(input),input,data,plotlog,lookahead,sSocialDist,eSocialDist,54))#single plot
-  output$plot.ui <- renderUI({  plotOutput("Plot0", height=plotHeight)})
+  output$Plot0 <- renderPlotly(generate_plot(identify_plot(input),input,data,plotlog,lookahead,sSocialDist,eSocialDist,54))#single plot
+  output$plot.ui <- renderUI({  plotlyOutput("Plot0", height=plotHeight)})
 }
 
 ui     <- function(request){
@@ -1210,7 +1211,6 @@ try({load("cache/alldata.RData" )
   print(Sys.time())
   print (hour(Sys.time()))
   print(max(amerData$rdate))
-  # if ( (hour(Sys.time())>23) & (max(amerData$rdate)<Sys.Date())) {refresh=TRUE}
 })
 
 if (refresh|forceRefresh) {
