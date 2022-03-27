@@ -12,6 +12,9 @@ shhh(library(shiny))
 shhh(library(scales))
 shhh(library(tidyverse))
 shhh(library(reshape2))
+shhh(library(plotly))
+library(data.table)
+library(DT)
 # set some global values for program-----------
 options(warn = 1, scipen = 999)#no scientific notation in plots
 forceRefresh       = FALSE #Uncomment to force reload of data from web
@@ -1146,8 +1149,80 @@ identify_plot <- function(input){
 #UI and Server for Shiny------------------------------------------
 server <- function(input, output, session){ 
   #Shiny Server. Plot0 is main plot, Plots1-4 are for "all" reports, 5-6 where for comparisions
-  output$Plot0 <- renderPlot(generate_plot(identify_plot(input),input,data,plotlog,lookahead,sSocialDist,eSocialDist,54))#single plot
-  output$plot.ui <- renderUI({  plotOutput("Plot0", height=plotHeight)})
+
+rawdata <- reactive({
+    focusplot=identify_plot(input)
+    #takes menu input and chosen report (focusplot) and returns plot object to UI
+    if (is.null(focusplot) | (focusplot=="NA")) {return(plot_unavailable())}
+    
+    sSocialDist  = input$sdw[1]
+    eSocialDist  = input$sdw[2]
+    
+    lookahead    = as.integer(input$look-eSocialDist)
+    if (is.null(input$options))
+    {
+      plotlog=0
+      normalize=FALSE
+    }
+    else 
+    {
+      if (grepl(paste(input$options,collapse="|"),"log"))   {plotlog  = 1} else {plotlog  = 0} #changed from 0 1 boolean in interface late in game
+      normalize    = grepl(paste(input$options,collapse="|"),"normalize")
+      
+    }
+    try({
+      if (input$scope == "All")     {data = allData } #Choose the data to use 
+      if (input$scope == "USA")     {data = amerData}
+      if (input$scope == "World")   {data = worldData}
+      
+      if (!input$hotspots){if ((input$scope == "All")   ) {estate = input$region}     
+        if ((input$scope == "World") ) {estate = input$country}   
+        if ((input$scope == "USA")   ) {estate = input$state}}
+      else  {if ((input$scope == "All")   ) {estate = input$hregion}
+        if ((input$scope == "World") ) {estate = input$hcountry}
+        if ((input$scope == "USA")   ) {estate = input$hstate}}
+      if (input$scope == "Custom")  {
+        estate = input$cregion
+        if (estate == "IR BE FR GE MA")       {estate=c("Ireland","Belgium","France","Germany","MA")}
+        else if (estate == "Deep Red vs. Deep Blue") {estate=c("Deep _Red State","Deep Blue State")}
+        else if (estate == "Blue States")  {estate= electoralBlue}
+        else if (estate == "Blue States No CA")  {estate= electoralBlueMinusCA}
+        else if (estate == "Deep Blue States")  {estate= deepBlueState}
+        else if (estate == "Red States")   {estate =electoralRed}
+        else if (estate == "Deep Red States")   {estate =deepRedState}
+        else if (estate == "All States")   {estate = electoralAll}
+        else if (estate == "Flattening Spectrum"){estate = c("Brazil","China","Russia","South_Korea","Switzerland","Germany","Iceland","USA","Croatia", "Sweden","Deep _Red State","Deep Blue State","Chile")}
+        else if (estate == "Europe")       {estate= unique(allData$state[allData$continentExp=="Europe" ])}
+        else if (estate == "Americas")     {estate= unique(allData$state[allData$continentExp=="Americas"])}
+        else if (estate == "Oceania")      {estate= unique(allData$state[allData$continentExp=="Oceania"])}
+        else if (estate == "Asia")         {estate= unique(allData$state[allData$continentExp=="Asia"   ])}
+        else if (estate == "Africa")       {estate= unique(allData$state[allData$continentExp=="Africa" ])}
+        else if (estate == "Newton vs.")   {estate= c("Newton","MA","USA","World","Deep _Red State","Deep Blue State")}
+        else if (estate == "All Countries"){estate= unique(worldData$state)}
+        data = allData[grepl(paste(estate,collapse = "|"),allData$state),]}
+    }) #catch bad old hyperlinks with try
+    
+    if (length(estate)>1){overlay=TRUE}else{overlay=FALSE}
+    
+    if (input$mode=="Trends"){ if (input$scope=="World") { inputfeature=input$feature}        else {inputfeature=input$featureUSA} }
+    else                      {if (input$scope=="World") { inputfeature=input$featureRanking} else {inputfeature=input$featureRankingUSA}}
+    if (overlay & (inputfeature == "All"))   {return(plot_unavailable("for 'all' aspects for 2+ regions"))}
+    if ((input$aspect == "CFR etc") & (inputfeature=="All"))   {return(plot_unavailable("for 'all' except daily/total"))}
+    data = data[data$rdate >= input$startd,]
+    data = as.data.table(data)
+    return(data)})
+
+output$downloadData <- downloadHandler(
+  filename = function() {
+    paste("data-", Sys.Date(), ".csv", sep="")
+  },
+  content = function(file) {
+    write.csv(rawdata(), file)
+  }
+)
+
+  output$Plot0 <- renderPlotly(generate_plot(identify_plot(input),input,data,plotlog,lookahead,sSocialDist,eSocialDist,54))#single plot
+  output$plot.ui <- renderUI({  plotlyOutput("Plot0", height=plotHeight)})
 }
 
 ui     <- function(request){
@@ -1197,7 +1272,9 @@ ui     <- function(request){
         sliderInput("sdw",  "What Data for Model",       min = ymd("20200301"), max = Sys.Date()            , value = c(as.Date(as.Date(Sys.Date()-distwindow)),as.Date(Sys.Date()))-2,round=TRUE, dragRange=FALSE),
         
       ),
-      mainPanel(  uiOutput("plot.ui")             )
+      mainPanel(  uiOutput("plot.ui"), 
+                  downloadButton("downloadData", "Download")
+                  )
     ))}
 
 #Launch Program----------------------------------
@@ -1210,7 +1287,6 @@ try({load("cache/alldata.RData" )
   print(Sys.time())
   print (hour(Sys.time()))
   print(max(amerData$rdate))
-  # if ( (hour(Sys.time())>23) & (max(amerData$rdate)<Sys.Date())) {refresh=TRUE}
 })
 
 if (refresh|forceRefresh) {
