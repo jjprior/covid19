@@ -14,12 +14,10 @@ shhh(library(tidyverse))
 shhh(library(reshape2))
 shhh(library(plotly))
 library(data.table)
-library(DT)
 # set some global values for program-----------
 options(warn = 1, scipen = 999)#no scientific notation in plots
 forceRefresh       = FALSE #Uncomment to force reload of data from web
 #forceRefresh       = TRUE #Uncomment to force reload of data from web -- remember need refresh if  CODE changed!!!
-debugprint          = 1   #set = 1 for pp(txt,var) debug printing
 lookback            = 50  #how far back model show plot model on top of data
 distwindow          = 15 #how far back for default social distancing window
 maxforecastdays     = 120 #maximum forward forecasting
@@ -42,7 +40,6 @@ electoralBlue = c("CA", "NY", "IL", "NJ", "VA", "MA", "MD", "MN", "CO","WA", "CT
 electoralBlueMinusCA = c("NY", "IL", "NJ", "VA", "MA", "MD", "MN", "CO","WA", "CT", "OR", "NV", "NM", "NH", "RI", "DE", "HI", "VT", "ME") 
 electoralRed  = c("AK", "MT", "ND", "SD", "WY", "ID", "NE", "WV", "AR","IA", "KS", "MS", "UT", "OK", "KY", "LA", "AL", "SC", "MO", "WI", "AZ", "IN", "TN","NC", "GA", "MI", "OH", "PA", "FL", "TX")
 electoralAll  = c(electoralRed,electoralBlue)
-pp   <- function(p1,p2="",p3="",p4=""){if (debugprint == 1){print(paste(p1,p2,p3,p4))}} #debug printing of 4 values
 #GET DATA FROM WEB Or DISK--------------------------------------------------------
 get_world_data = function(refreshData=TRUE){  
   #Load world data from web, backup load from disk
@@ -468,7 +465,6 @@ growth_estimate  <- function(date0,mday0,x0,lookahead,lookback, m){
   a      = unname(coef(m)[1])  #log(fracpostivve growth rate at date 0 fit)
   b      = unname(coef(m)[2])  #time constant for fracpositive growth rate decline
   if (exp(a)>0.3){
-    pp("high growth = ", exp(a))
     a = log(0.3)
   }# don't extrapolate exponential growth above 0.25 -- for sparse reporting isssue
   k      <- function(t){
@@ -632,7 +628,11 @@ mid_point   <- function(x, ht=0.5){ # place scaled amongst data for annotation.
 
 format_plot <- function(p, estate, ytitle, plotlog,sSocialDist,eSocialDist,pct=0){
   # format plots generally
+<<<<<<< HEAD
   #p = p + theme_set(theme_gray(base_size = 12))
+=======
+  #p = p + theme_set(theme_gray(base_size = 16))
+>>>>>>> 13e27651937ddeb7da65cf64fe9b7319cf6d95ce
   p = p + theme(axis.title.x=element_blank()) 
   p = p + theme(legend.title=element_blank())
   p = p + theme(plot.caption = element_text(hjust = 0))
@@ -995,7 +995,6 @@ generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSo
   
   if (grepl("Complete",focusplot)){plotlog=0}
   
-  pp("plotting",focusplot)
   if (focusplot == "Total Tests")           {return(plot_total(data,estate,plotlog,showpositive,showdeath,1      , showhosp,showest,showrec,showvax, showvaxed,showfullyvaxed, lookahead,sSocialDist,eSocialDist,normalize,daily,overlay))}
   if (focusplot == "Total Cases")           {return(plot_total(data,estate,plotlog,1,0,                  showtest, showhosp,showest,showrec,showvax, showvaxed,showfullyvaxed,lookahead,sSocialDist,eSocialDist,normalize,daily,overlay))}
   if (focusplot == "Total Deaths")          {return(plot_total(data,estate,plotlog,0,1,showtest, showhosp,showest,showrec,showvax, showvaxed,showfullyvaxed,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
@@ -1126,7 +1125,6 @@ identify_plot <- function(input){
   
   focusplot = namePlot(input) #default nameing
   #ratio reports
-  pp("aspect",aspect)
   if (aspect == "CFR etc" | aspect=="Incremental"){
     if (inputfeature  == "Tests")            {focusplot = "% Pop Tested" }
     if (inputfeature  == "Cases")            {focusplot = "% Positive" }
@@ -1224,7 +1222,13 @@ output$downloadData <- downloadHandler(
   }
 )
 
-  output$Plot0 <- renderPlotly(generate_plot(identify_plot(input),input,data,plotlog,lookahead,sSocialDist,eSocialDist,54))#single plot
+  output$Plot0 <- renderPlotly({
+    p <- generate_plot(identify_plot(input),input,data,plotlog,lookahead,sSocialDist,eSocialDist,54)
+    p <- config(ggplotly(p),  displaylogo = FALSE)
+    return(p)
+  }
+)
+  
   output$plot.ui <- renderUI({  plotlyOutput("Plot0", height=plotHeight)})
 }
 
@@ -1293,7 +1297,6 @@ try({load("cache/alldata.RData" )
 })
 
 if (refresh|forceRefresh) {
-  pp("reloading data")
   amerData     = get_amer_data(refresh|forceRefresh)
   worldData    = get_world_data(refresh|forceRefresh)
   newtonData   = get_newton_data() 
