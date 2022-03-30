@@ -92,8 +92,9 @@ get_world_data = function(refreshData=TRUE){
   x$date = parse_date_time(x$date,"ymd")
   colnames(x)= c("rdate","state","positive","death")
   
-  print("merge vax data")
+  print("merging vax data")
   x= merge(x,rvac,by=c("rdate","state"),all.x=TRUE)
+  print("merged")
   x$daily_vaccinations[is.na(x$daily_vaccinations)]=0   
   
   load("worldpops.Rda")
@@ -120,7 +121,7 @@ get_world_data = function(refreshData=TRUE){
   x$test             = NA
   x$testIncrease     = NA
   x$continentExp      = NA
-  
+  print("covid calcs")
   x = covid_calc(x)
   print("done with calc")
   return(x)}
@@ -571,13 +572,16 @@ get_hot_spots_by = function(nowdata,sfeature,n){
   nowdata  = newdata
   nowdata  = nowdata[order(-nowdata$feature),]
   hotspots = head(nowdata$state,n)
-  return(levels(droplevels(hotspots)))}
+  return(unique(hotspots))}
 
 main_caption  <- function(s1,s2){paste(format(Sys.Date(), format = "%d%B") , " app.jackprior.org  - Social Dist. Basis: ",format(s1, format = "%d%b"),"-",format(s2, format = "%d%b"),sep = "")}
 
 main_title    <- function(s,gr=""){ggtitle(paste(  str_replace( str_replace_all(s,"_"," "),"Summary",""), gr))}
 
-p_add_vline      <- function(vdate){geom_vline(aes(xintercept =   as.numeric(as.POSIXct(vdate))))} # add vertical line on date plots
+p_add_vline      <- function(vdate){
+  p = geom_vline(aes(xintercept =   as.numeric(as.POSIXct(vdate))))
+  return(p)
+  } # add vertical line on date plots
 
 plot_unavailable <- function(txt=""){ggplot() + ggtitle(paste("Report unavailable",txt))} #for menu choices with no data
 
@@ -628,7 +632,7 @@ mid_point   <- function(x, ht=0.5){ # place scaled amongst data for annotation.
 
 format_plot <- function(p, estate, ytitle, plotlog,sSocialDist,eSocialDist,pct=0){
   # format plots generally
-  p = p + theme_set(theme_gray(base_size = 16))
+  #p = p + theme_set(theme_gray(base_size = 12))
   p = p + theme(axis.title.x=element_blank()) 
   p = p + theme(legend.title=element_blank())
   p = p + theme(plot.caption = element_text(hjust = 0))
@@ -644,7 +648,6 @@ format_date_plot <- function(p, estate, ytitle, plotlog,sSocialDist,eSocialDist,
   p = p + scale_x_datetime(date_labels = "%d%b", date_breaks = "1 month")
   p = p + ylab(ytitle)
   p = p + theme(axis.title.x = element_text(size = 0)) 
-  
   try({p = p + p_add_vline(as.Date(sSocialDist))+p_add_vline(as.Date(eSocialDist))})
   return(p)}
 
@@ -1267,7 +1270,7 @@ ui     <- function(request){
         
         #checkboxGroupInput('options',"Options",choices=c("LogY"="log","/mil"="normalize","15Mar-"="march1"),selected=c("log","normalize","march1"), inline=TRUE),
         checkboxGroupInput('options',"Options",choices=c("LogY"="log","/mil"="normalize"),selected=c("log","normalize"), inline=TRUE),
-        sliderInput("startd", "Start Plots at?",                  min = ymd("20200101"), max = Sys.Date()-30, value = ymd("20201115"), round=TRUE),
+        sliderInput("startd", "Start Plots at?",                  min = ymd("20200101"), max = Sys.Date()-30, value = ymd("20211115"), round=TRUE),
         sliderInput("look", "Forecast Horizon?",         min = Sys.Date()+7, max = Sys.Date()+maxforecastdays,    value = floor_date(Sys.Date()+defaultforecastdays,"month"),round=TRUE, dragRange=FALSE),
         sliderInput("sdw",  "What Data for Model",       min = ymd("20200301"), max = Sys.Date()            , value = c(as.Date(as.Date(Sys.Date()-distwindow)),as.Date(Sys.Date()))-2,round=TRUE, dragRange=FALSE),
         

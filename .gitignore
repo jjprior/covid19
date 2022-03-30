@@ -4,3 +4,13 @@ covid19.Rproj
 .Rhistory
 rsconnect
 covid19code.dcf
+cache/AmerDataCache.Rdu
+cache/alldata.RData
+cache/rvacUS.Rdu
+cache/rvacworld.Rdu
+cache/worlddata.Rdu
+AmerDataCache.Rdu
+alldata.RData
+rvacUS.Rdu
+rvacworld.Rdu
+worlddata.Rdu
