@@ -628,11 +628,6 @@ mid_point   <- function(x, ht=0.5){ # place scaled amongst data for annotation.
 
 format_plot <- function(p, estate, ytitle, plotlog,sSocialDist,eSocialDist,pct=0){
   # format plots generally
-<<<<<<< HEAD
-  #p = p + theme_set(theme_gray(base_size = 12))
-=======
-  #p = p + theme_set(theme_gray(base_size = 16))
->>>>>>> 13e27651937ddeb7da65cf64fe9b7319cf6d95ce
   p = p + theme(axis.title.x=element_blank()) 
   p = p + theme(legend.title=element_blank())
   p = p + theme(plot.caption = element_text(hjust = 0))
