@@ -15,6 +15,7 @@ shhh(library(reshape2))
 shhh(library(plotly))
 library(data.table)
 # set some global values for program-----------
+maxAge = 999
 options(warn = 1, scipen = 999)#no scientific notation in plots
 forceRefresh       = FALSE #Uncomment to force reload of data from web
 #forceRefresh       = TRUE #Uncomment to force reload of data from web -- remember need refresh if  CODE changed!!!
@@ -603,10 +604,11 @@ p_log_scaleX  <- function(p,plotlog,pct=0){
 
 lm_ln_eqn  <- function(m){
   #return correlation equation string for putting on plots
-  eq <- substitute(italic(y) == a  %.% " exp("* b %.% italic(x)*"),"~~italic(r)^2~"="~r2, 
-                   list(a = format(unname(exp(coef(m)[1])), digits = 2),
-                        b = format(unname(coef(m)[2]), digits = 2),
-                        r2 = format(summary(m)$r.squared, digits = 3)))
+  eq = format(summary(m)$r.squared, digits = 3)
+  #eq <- substitute(italic(y) == a  %.% " exp("* b %.% italic(x)*"),"~~italic(r)^2~"="~r2, 
+  #                 list(a = format(unname(exp(coef(m)[1])), digits = 2),
+  #                      b = format(unname(coef(m)[2]), digits = 2),
+  #                      r2 = format(summary(m)$r.squared, digits = 3)))
   as.character(as.expression(eq));}
 
 p_annotate <- function(rdates,plotpts,plotlog,txt="",atmin=FALSE){
@@ -1208,12 +1210,44 @@ rawdata <- reactive({
     data = as.data.table(data)
     return(data)})
 
+exportdata=reactive({
+  data=rawdata()
+  data=data[,c(
+  "rdate",
+  "mday",
+  "state",
+  "pop",
+  "positive",
+  "positiveIncrease",
+  "positiveIncremental",
+  "death",
+  "deathIncrease",
+  "deathIncremental",
+  "fracDeathIncrease",
+  "people_vaccinated",
+  "daily_vaccinations",
+  "VaxedIncrease",
+  "fracVaxIncrease",
+  "fracVaxedIncrease",
+  "people_fully_vaccinated",
+  "fullyVaxedIncrease",
+  "fracFullyVaxedIncrease",
+  "cfr",
+  "cfrIncremental",
+  "ifrRatio",
+  "ifrRatioIncremental",
+  "CaseGrowthRateDeclineRate",
+  "DeathGrowthRateDeclineRate",
+  "projectedCaseGrowth",
+  "projectedDeathGrowth")]
+})
+
 output$downloadData <- downloadHandler(
   filename = function() {
     paste("data-", Sys.Date(), ".csv", sep="")
   },
   content = function(file) {
-    write.csv(rawdata(), file)
+    write.csv(exportdata(), file)
   }
 )
 
@@ -1226,26 +1260,42 @@ output$downloadData <- downloadHandler(
   
   output$plot.ui <- renderUI({  plotlyOutput("Plot0", height=plotHeight)})
   
+ rfing= reactiveVal(FALSE)
+ 
+  output$refreshText= renderText(if (rfing()){"refreshing"}else{
+     paste("Refresh (",
+            round(as.Date(Sys.Date())-max(as.Date(amerData$rdate),na.rm=TRUE)-1,0),
+            "d,",
+            round(as.Date(Sys.Date())-max(as.Date(worldData$rdate),na.rm=TRUE)-1,0),
+            "d)"
+           )})
   
-  
-observeEvent("refreshButton",{
+observeEvent(input$refreshButton,{
+    print("refreshing")
+    print(Sys.time())
+    rfing(TRUE)
     refresh=TRUE
     forceRefresh=TRUE
     amerData     <<- get_amer_data(refresh|forceRefresh)
     worldData    <<- get_world_data(refresh|forceRefresh)
-    newtonData   <<- get_newton_data() 
+    #newtonData   <<- get_newton_data() 
+    print("aggregating")
     USStateData         <<- region_aggregate( amerData[ grepl( paste(electoralAll,  collapse="|"), amerData$state), ],  "US States") #doesn't sum states without final entries. has hospitalization data 
     deepBlueStateData   <<- region_aggregate( amerData[ grepl( paste(deepBlueState, collapse="|"), amerData$state), ],  "Deep Blue State")
     deepRedStateData    <<- region_aggregate( amerData[ grepl( paste(deepRedState,  collapse="|"), amerData$state), ],  "Deep _Red State")
-    blueStateData       <<- region_aggregate( amerData[ grepl( paste(electoralBlue, collapse="|"), amerData$state), ],  "VoteBlueState")
-    blueStateDataminusCA<<- region_aggregate( amerData[ grepl( paste(electoralBlueMinusCA, collapse="|"), amerData$state), ],  "VoteBlueStateNoCali")
-    redStateData        <<- region_aggregate( amerData[ grepl( paste(electoralRed,  collapse="|"), amerData$state), ],  "Vote_RedState")
+    print("stacking")
     worldData    <<- rbind(worldData,USStateData)
+    print("world aggregate")
     world        <<- region_aggregate(worldData,"World")
-    allData      <<- rbind(amerData,worldData,world,deepBlueStateData,deepRedStateData,blueStateData,redStateData,USStateData) 
-    save(amerData,worldData,allData, file = "cache/alldata.RData")})
-
-}
+    print("bind")
+    allData      <<- rbind(amerData,worldData,world,deepBlueStateData,deepRedStateData,USStateData) 
+    rfing(FALSE)
+    print("save")
+    save(amerData,worldData,allData, file = "cache/alldata.RData")
+    print("saved")
+    },ignoreNULL=TRUE) 
+    
+ }
 
 ui     <- function(request){
   #User interface
@@ -1293,7 +1343,7 @@ ui     <- function(request){
         sliderInput("look", "Forecast Horizon?",         min = Sys.Date()+7, max = Sys.Date()+maxforecastdays,    value = floor_date(Sys.Date()+defaultforecastdays,"month"),round=TRUE, dragRange=FALSE),
         sliderInput("sdw",  "What Data for Model",       min = ymd("20200301"), max = Sys.Date()            , value = c(as.Date(as.Date(Sys.Date()-distwindow)),as.Date(Sys.Date()))-2,round=TRUE, dragRange=FALSE),
         
-        actionButton("refreshButton","Refresh")
+        actionButton("refreshButton",textOutput("refreshText"))
         
       ),
       mainPanel(  uiOutput("plot.ui"), 
@@ -1307,7 +1357,7 @@ refresh=TRUE
 Sys.setenv(TZ='America/New_York')
 try({load("cache/alldata.RData" )
   refresh = FALSE
-  if (max(amerData$rdate)<(Sys.Date()-1.2)) {refresh=TRUE}
+  if (max(amerData$rdate)<(Sys.Date()-maxAge)) {refresh=TRUE}
   print(Sys.time())
   print (hour(Sys.time()))
   print(max(amerData$rdate))
