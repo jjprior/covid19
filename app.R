@@ -1225,6 +1225,26 @@ output$downloadData <- downloadHandler(
 )
   
   output$plot.ui <- renderUI({  plotlyOutput("Plot0", height=plotHeight)})
+  
+  
+  
+observeEvent("refreshButton",{
+    refresh=TRUE
+    forceRefresh=TRUE
+    amerData     <<- get_amer_data(refresh|forceRefresh)
+    worldData    <<- get_world_data(refresh|forceRefresh)
+    newtonData   <<- get_newton_data() 
+    USStateData         <<- region_aggregate( amerData[ grepl( paste(electoralAll,  collapse="|"), amerData$state), ],  "US States") #doesn't sum states without final entries. has hospitalization data 
+    deepBlueStateData   <<- region_aggregate( amerData[ grepl( paste(deepBlueState, collapse="|"), amerData$state), ],  "Deep Blue State")
+    deepRedStateData    <<- region_aggregate( amerData[ grepl( paste(deepRedState,  collapse="|"), amerData$state), ],  "Deep _Red State")
+    blueStateData       <<- region_aggregate( amerData[ grepl( paste(electoralBlue, collapse="|"), amerData$state), ],  "VoteBlueState")
+    blueStateDataminusCA<<- region_aggregate( amerData[ grepl( paste(electoralBlueMinusCA, collapse="|"), amerData$state), ],  "VoteBlueStateNoCali")
+    redStateData        <<- region_aggregate( amerData[ grepl( paste(electoralRed,  collapse="|"), amerData$state), ],  "Vote_RedState")
+    worldData    <<- rbind(worldData,USStateData)
+    world        <<- region_aggregate(worldData,"World")
+    allData      <<- rbind(amerData,worldData,world,deepBlueStateData,deepRedStateData,blueStateData,redStateData,USStateData) 
+    save(amerData,worldData,allData, file = "cache/alldata.RData")})
+
 }
 
 ui     <- function(request){
@@ -1272,6 +1292,8 @@ ui     <- function(request){
         sliderInput("startd", "Start Plots at?",                  min = ymd("20200101"), max = Sys.Date()-30, value = ymd("20211115"), round=TRUE),
         sliderInput("look", "Forecast Horizon?",         min = Sys.Date()+7, max = Sys.Date()+maxforecastdays,    value = floor_date(Sys.Date()+defaultforecastdays,"month"),round=TRUE, dragRange=FALSE),
         sliderInput("sdw",  "What Data for Model",       min = ymd("20200301"), max = Sys.Date()            , value = c(as.Date(as.Date(Sys.Date()-distwindow)),as.Date(Sys.Date()))-2,round=TRUE, dragRange=FALSE),
+        
+        actionButton("refreshButton","Refresh")
         
       ),
       mainPanel(  uiOutput("plot.ui"), 
