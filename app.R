@@ -151,7 +151,6 @@ get_amer_data     <- function(refreshData=TRUE){
       daily_vaccinations_per_million = col_double(),
       share_doses_used = col_double())
     rvac = read_csv("https://raw.githubusercontent.com/owid/covid-19-data/master/public/data/vaccinations/us_state_vaccinations.csv",col_types=col_types)
-    print("read US vaccine data OK")
     saveRDS(rvac,file="cache/rvacUS.Rdu")   })}
   
   rvac=readRDS(file="cache/rvacUS.Rdu")
@@ -226,30 +225,6 @@ get_sewer_data  <- function(){
   sewer = read_csv("mawastewater.csv",col_types=cols())
 }
 
-get_newton_data   <- function(){ #Get Newton, MA data from disk (ideally from googl sheet)
-  newton        = read_csv("newton.csv",col_types=cols())
-  newton        = as.data.frame(newton)
-  newton$rdate  = parse_date_time(newton$date,orders = "%m%d%y")
-  index         = !(newton$positiveIncrease=="#N/A")
-  newton        = newton[index,]
-  index         = newton$deathIncrease=="#N/A"
-  newton$deathIncrease[index] = NA
-  newton$death[index]         = NA
-  newton       = newton[,c("rdate","positive","death","positiveIncrease","deathIncrease")]
-  newton$state ="Newton"
-  newton$positiveIncrease = as.numeric(newton$positiveIncrease)
-  newton$deathIncrease    = as.numeric(newton$deathIncrease)
-  newton$death            = as.numeric(newton$death)
-  newton$positive         = as.numeric(newton$positive)
-  newton$pop              = 85000 # rough population of Newton
-  newton$hosp               = NA
-  newton$hospIncrease       = NA
-  newton$test               = NA
-  newton$testIncrease       = NA
-  newton$continentExp = "other"
-  newton    = covid_calc(newton)
-  return(newton)}
-
 region_aggregate <- function(data,state="World"){ #sum up countries to world or states to USA
   #this doesn't deal with incomplete data for a country in final days and give smaller counts than full at end. 
   data = data[data$rdate < Sys.Date() , ] #avoid partial data for "today"
@@ -281,7 +256,6 @@ region_aggregate <- function(data,state="World"){ #sum up countries to world or 
   Regiondata = merge(Regiondata,RegionVaxedIncrease,   by ="rdate", all=T)
   data$hospIncrease=NA
   if (grepl("US States|Blue|Red",state)){
-    print('merging states')
     Regiontest          = aggregate(test~rdate,                   data = data, FUN = sum, na.rm = TRUE, na.action = NULL)
     RegiontestIncrease  = aggregate(testIncrease~rdate,           data = data, FUN = sum, na.rm = TRUE, na.action = NULL)
     Regionhosp          = aggregate(hosp~rdate,                   data = data, FUN = sum, na.rm = TRUE, na.action = NULL)
@@ -373,7 +347,6 @@ covid_calc <- function(x){
   x$fracTestIncrease         = NA
   x$mday                     = as.numeric(difftime(x$rdate,Sys.Date(),units=c("days"))) #need to regress against days relative to today. 
   x =  x[with(x,order(rdate)),]  
-  print("loop")
   for (s in unique(x$state)){#calculated day over day growth frac (rates) in cases, etc. 
     index= (x$state==s)
     x[index,] = calc_growth_since_last_change(x[index,],"positiveIncrease",    "positive",    "fracPositiveIncrease")
@@ -656,7 +629,6 @@ plot_feature        <- function(sdata,feature,ftitle,cstate,plotlog,lookahead,sS
   if (!overlay){p = p+geom_point(sdata, mapping=aes(x=rdate,y=y,color=flegend))}
   p = p + geom_line(data = sdata    , mapping =aes(x = rdate, y = movingAvg, colour = flegend))
   for (s in cstate){p= p+p_annotate(sdata$rdate[sdata$state==s],sdata$movingAvg[sdata$state==s],plotlog,s)}
-  print(ispct)
   p = format_date_plot(p,cstate,ftitle,plotlog,sSocialDist,eSocialDist,ispct)
   p = format_legend(p,cstate)
   return(p)}
@@ -1080,7 +1052,6 @@ generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSo
   return(plot_unavailable())} # if nothing matched
 
 namePlot      <- function(input){
-  print(input$aspectRanking)
   #general naming based on inputs
   if (input$mode=="Rankings") {aspect       = input$aspectRanking } else { aspect = input$aspect}
   if (input$mode=="Trends"){ if (input$scope=="World") { inputfeature=input$feature}        else {inputfeature=input$featureUSA} }
@@ -1167,7 +1138,6 @@ rawdata <- reactive({
         else if (estate == "Oceania")      {estate= unique(allData$state[allData$continentExp=="Oceania"])}
         else if (estate == "Asia")         {estate= unique(allData$state[allData$continentExp=="Asia"   ])}
         else if (estate == "Africa")       {estate= unique(allData$state[allData$continentExp=="Africa" ])}
-        else if (estate == "Newton vs.")   {estate= c("Newton","MA","USA","World","Deep _Red State","Deep Blue State")}
         else if (estate == "All Countries"){estate= unique(worldData$state)}
         data = allData[grepl(paste(estate,collapse = "|"),allData$state),]}
     }) #catch bad old hyperlinks with try
@@ -1233,39 +1203,56 @@ output$downloadData <- downloadHandler(
   
  rfing= reactiveVal(FALSE)
  
-  output$refreshText= renderText(if (rfing()){"refreshing"}else{
-     paste("Refresh (",
+  output$refreshTextUS= renderText(if (rfing()){"refreshing"}else{
+     paste("Refresh US (",
             round(as.Date(Sys.Date())-max(as.Date(amerData$rdate),na.rm=TRUE)-1,0),
-            "d,",
-            round(as.Date(Sys.Date())-max(as.Date(worldData$rdate),na.rm=TRUE)-1,0),
-            "d)"
-           )})
+            "d)"       )})
   
-observeEvent(input$refreshButton,{
+  output$refreshTextWorld= renderText(if (rfing()){"refreshing"}else{
+    paste("Refresh World (",
+           round(as.Date(Sys.Date())-max(as.Date(worldData$rdate),na.rm=TRUE)-1,0),
+          "d)"
+    )})
+
+observeEvent(input$refreshUS,{
     print("refreshing")
-    print(Sys.time())
     rfing(TRUE)
+    print(Sys.time())
     refresh=TRUE
     forceRefresh=TRUE
     amerData     <<- get_amer_data(refresh|forceRefresh)
-    worldData    <<- get_world_data(refresh|forceRefresh)
     USStateData         <<- region_aggregate( amerData[ grepl( paste(electoralAll,  collapse="|"), amerData$state), ],  "US States") #doesn't sum states without final entries. has hospitalization data 
     deepBlueStateData   <<- region_aggregate( amerData[ grepl( paste(deepBlueState, collapse="|"), amerData$state), ],  "Deep Blue State")
     deepRedStateData    <<- region_aggregate( amerData[ grepl( paste(deepRedState,  collapse="|"), amerData$state), ],  "Deep _Red State")
-    print("stacking")
-    worldData    <<- rbind(worldData,USStateData)
-    print("world aggregate")
-    world        <<- region_aggregate(worldData,"World")
-    print("bind")
-    allData      <<- rbind(amerData,worldData,world,deepBlueStateData,deepRedStateData,USStateData) 
+    allData      <<- rbind(amerData,worldData,deepBlueStateData,deepRedStateData,USStateData) 
     rfing(FALSE)
-    print("save")
-    save(amerData,worldData,allData, file = "cache/alldata.RData")
+    save(amerData,worldData,allData,world,deepBlueStateData,deepRedStateData,USStateData, file = "cache/alldata.RData")
     print("saved")
     print(Sys.time())
     },ignoreNULL=TRUE) 
-    
- }
+
+observeEvent(input$refreshWorld,{
+  print("refreshing")
+  rfing(TRUE)
+  print(Sys.time())
+  refresh=TRUE
+  forceRefresh=TRUE
+  worldData    <<- get_world_data(refresh|forceRefresh)
+  worldData    <<- rbind(worldData,USStateData)
+  world        <<- region_aggregate(worldData,"World")
+  allData      <<- rbind(amerData,worldData,world,deepBlueStateData,deepRedStateData) 
+  rfing(FALSE)
+  save(amerData,worldData,allData,world,deepBlueStateData,deepRedStateData,USStateData, file = "cache/alldata.RData")
+  print("saved")
+  print(Sys.time())
+},ignoreNULL=TRUE) 
+
+}
+
+
+
+
+
 
 ui     <- function(request){
   #User interface
@@ -1323,7 +1310,8 @@ ui     <- function(request){
         sliderInput("look", "Forecast Horizon?",         min = Sys.Date()+7, max = Sys.Date()+maxforecastdays,    value = floor_date(Sys.Date()+defaultforecastdays,"month"),round=TRUE, dragRange=FALSE),
         sliderInput("sdw",  "What Data for Model",       min = ymd("20200301"), max = Sys.Date()            , value = c(as.Date(as.Date(Sys.Date()-distwindow)),as.Date(Sys.Date()))-2,round=TRUE, dragRange=FALSE),
         
-        actionButton("refreshButton",textOutput("refreshText"))
+        actionButton("refreshUS",textOutput("refreshTextUS")),
+        actionButton("refreshWorld",textOutput("refreshTextWorld"))
         
       ),
       mainPanel(  uiOutput("plot.ui"), 
@@ -1338,15 +1326,11 @@ Sys.setenv(TZ='America/New_York')
 try({load("cache/alldata.RData" )
   refresh = FALSE
   if (max(amerData$rdate)<(Sys.Date()-maxAge)) {refresh=TRUE}
-  print(Sys.time())
-  print (hour(Sys.time()))
-  print(max(amerData$rdate))
 })
 
 if (refresh|forceRefresh) {
   amerData     = get_amer_data(refresh|forceRefresh)
   worldData    = get_world_data(refresh|forceRefresh)
-  newtonData   = get_newton_data() 
   USStateData           = region_aggregate( amerData[ grepl( paste(electoralAll,  collapse="|"), amerData$state), ],  "US States") #doesn't sum states without final entries. has hospitalization data 
   deepBlueStateData     = region_aggregate( amerData[ grepl( paste(deepBlueState, collapse="|"), amerData$state), ],  "Deep Blue State")
   deepRedStateData      = region_aggregate( amerData[ grepl( paste(deepRedState,  collapse="|"), amerData$state), ],  "Deep _Red State")
