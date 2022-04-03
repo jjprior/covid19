@@ -1201,50 +1201,60 @@ output$downloadData <- downloadHandler(
   
   output$plot.ui <- renderUI({  plotlyOutput("Plot0", height=plotHeight)})
   
- rfing= reactiveVal(FALSE)
+ rfingUS= reactiveVal(FALSE)
+ rfingWorld= reactiveVal(FALSE)
  
-  output$refreshTextUS= renderText(if (rfing()){"refreshing"}else{
+  output$refreshTextUS= renderText(if (rfingUS()){"refreshing"}else{
      paste("Refresh US (",
             round(as.Date(Sys.Date())-max(as.Date(amerData$rdate),na.rm=TRUE)-1,0),
             "d)"       )})
   
-  output$refreshTextWorld= renderText(if (rfing()){"refreshing"}else{
+  output$refreshTextWorld= renderText(if (rfingWorld()){"refreshing"}else{
     paste("Refresh World (",
            round(as.Date(Sys.Date())-max(as.Date(worldData$rdate),na.rm=TRUE)-1,0),
           "d)"
     )})
 
 observeEvent(input$refreshUS,{
+  withProgress(message="refreshing", expr={
+    incProgress(0.1,"getting US data")  
     print("refreshing")
-    rfing(TRUE)
+    rfingUS(TRUE)
     print(Sys.time())
     refresh=TRUE
     forceRefresh=TRUE
     amerData     <<- get_amer_data(refresh|forceRefresh)
+    incProgress(0.1,"aggregating")
     USStateData         <<- region_aggregate( amerData[ grepl( paste(electoralAll,  collapse="|"), amerData$state), ],  "US States") #doesn't sum states without final entries. has hospitalization data 
     deepBlueStateData   <<- region_aggregate( amerData[ grepl( paste(deepBlueState, collapse="|"), amerData$state), ],  "Deep Blue State")
     deepRedStateData    <<- region_aggregate( amerData[ grepl( paste(deepRedState,  collapse="|"), amerData$state), ],  "Deep _Red State")
+    incProgress(0.1,"saving")  
     allData      <<- rbind(amerData,worldData,deepBlueStateData,deepRedStateData,USStateData) 
-    rfing(FALSE)
     save(amerData,worldData,allData,world,deepBlueStateData,deepRedStateData,USStateData, file = "cache/alldata.RData")
     print("saved")
     print(Sys.time())
-    },ignoreNULL=TRUE) 
+    rfingUS(FALSE)
+    })},ignoreNULL=TRUE) 
 
 observeEvent(input$refreshWorld,{
   print("refreshing")
-  rfing(TRUE)
+  rfingWorld(TRUE)
   print(Sys.time())
   refresh=TRUE
   forceRefresh=TRUE
+  
+  withProgress(message="refreshing", expr={
+  incProgress(0.1,"getting world data")  
   worldData    <<- get_world_data(refresh|forceRefresh)
   worldData    <<- rbind(worldData,USStateData)
+  incProgress(0.1,"aggregating")
   world        <<- region_aggregate(worldData,"World")
+  incProgress(0.1,"saving")  
   allData      <<- rbind(amerData,worldData,world,deepBlueStateData,deepRedStateData) 
-  rfing(FALSE)
   save(amerData,worldData,allData,world,deepBlueStateData,deepRedStateData,USStateData, file = "cache/alldata.RData")
   print("saved")
   print(Sys.time())
+  rfingWorld(FALSE)})
 },ignoreNULL=TRUE) 
 
 }
