@@ -38,7 +38,6 @@ refCountry = "US States"
 deepBlueState = c("CA", "DC", "HI","MD", "MA","NY","RI","VT")
 deepRedState  = c("AL", "AK","AR", "ID","KS", "KY", "LA","MS","MT","NE","ND","OK","SC","SD","TN","TX","UT","WV","WY")
 electoralBlue = c("CA", "NY", "IL", "NJ", "VA", "MA", "MD", "MN", "CO","WA", "CT", "OR", "NV", "NM", "NH", "RI", "DE", "HI", "VT", "ME")
-electoralBlueMinusCA = c("NY", "IL", "NJ", "VA", "MA", "MD", "MN", "CO","WA", "CT", "OR", "NV", "NM", "NH", "RI", "DE", "HI", "VT", "ME") 
 electoralRed  = c("AK", "MT", "ND", "SD", "WY", "ID", "NE", "WV", "AR","IA", "KS", "MS", "UT", "OK", "KY", "LA", "AL", "SC", "MO", "WI", "AZ", "IN", "TN","NC", "GA", "MI", "OH", "PA", "FL", "TX")
 electoralAll  = c(electoralRed,electoralBlue)
 #GET DATA FROM WEB Or DISK--------------------------------------------------------
@@ -86,18 +85,16 @@ get_world_data = function(refreshData=TRUE){
   print("loading world data cache")
   x    = readRDS(file="cache/worlddata.Rdu")
   x     = x %>% select(date,location, total_cases, total_deaths)
-  print("selected")
   x$date = parse_date_time(x$date,"ymd")
   colnames(x)= c("rdate","state","positive","death")
   
   print("merging vax data")
   x= merge(x,rvac,by=c("rdate","state"),all.x=TRUE)
-  print("merged")
   x$daily_vaccinations[is.na(x$daily_vaccinations)]=0   
   
   load("worldpops.Rda")
   pops$state = str_replace_all(pops$state,"_"," ")
-  x = merge(x,pops, by="state")
+  x = merge(x,pops, by="state")  #US excluded by not being in pops table
   x$continentExp="All"
   x            = x[order(x$rdate),]
   for (s in unique(x$state)){ 
@@ -175,13 +172,8 @@ get_amer_data     <- function(refreshData=TRUE){
   
   data = data %>% select(date,state,positive,death)
   data              = data[!grepl("MP|VI|GU|AS",data$state),]  #take out MP, its small and outlier
-  print("thinned")
-  #data $totalTestResults = NA
-  #data$hospitalizedCumulative = NA
-  #data$hospitalizedIncrease = NA
   data$test = NA
   data$hosp = NA
-  #data$hospitalizedIncrease = NA 
   data$hospIncrease = NA
   
   ##data$test         = data$totalTestResults  #rename columns
@@ -221,13 +213,7 @@ get_amer_data     <- function(refreshData=TRUE){
   
   data        = subset( data, select = -date ) 
   data        = data[,order(colnames(data))] #order columns for easier rbind match up check
-  
-  print("minmax")
-  print(min(rvac$daily_vaccinations,na.rm=TRUE))
-  print(max(rvac$daily_vaccinations,na.rm=TRUE))
-  print(min(data$daily_vaccinations,na.rm=TRUE))
-  print(max(data$daily_vaccinations,na.rm=TRUE))
-  
+
   return(data)}
 
 calc_daily <- function(x){
@@ -369,19 +355,14 @@ covid_calc <- function(x){
   x$positiveEst         = x$positive*x$ifrRatioIncremental
   x$positiveIncreaseEst = x$positiveIncrease*x$ifrRatioIncremental
   x$dperh               = x$death/x$hosp #deaths per hospitalization
-  ##x$dperhIncremental    = x$deathIncrease/x$hospIncrease
   x$dperhIncremental = NA
   x$fracpos             = x$positive/x$test
   x$fracposIncremental  = x$positiveIncrease/x$testIncrease
-  
   x$fracpoptested       = x$test/x$pop
   x$fracpoptestedIncremental = x$testIncrease/x$pop
   x$positiveIncremental      = x$positiveIncrease/x$testIncrease
-  ##x$deathIncremental         = x$deathIncrease/x$hospIncrease
   x$deathIncremental =  NA
-  ##x$hospIncremental          = x$hospIncrease/x$positiveIncrease
   x$fracHospIncrease         = NA
-  #x$hospIncremental = NA
   x$fracPositiveIncrease     = NA
   x$fracVaxIncrease           = NA
   x$fracFullyVaxedIncrease   = NA
@@ -392,6 +373,7 @@ covid_calc <- function(x){
   x$fracTestIncrease         = NA
   x$mday                     = as.numeric(difftime(x$rdate,Sys.Date(),units=c("days"))) #need to regress against days relative to today. 
   x =  x[with(x,order(rdate)),]  
+  print("loop")
   for (s in unique(x$state)){#calculated day over day growth frac (rates) in cases, etc. 
     index= (x$state==s)
     x[index,] = calc_growth_since_last_change(x[index,],"positiveIncrease",    "positive",    "fracPositiveIncrease")
@@ -954,19 +936,14 @@ generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSo
       estate = input$cregion
       if (estate == "IR BE FR GE MA")       {estate=c("Ireland","Belgium","France","Germany","MA")}
       else if (estate == "Deep Red vs. Deep Blue") {estate=c("Deep _Red State","Deep Blue State")}
-      else if (estate == "Blue States")  {estate= electoralBlue}
-      else if (estate == "Blue States No CA")  {estate= electoralBlueMinusCA}
       else if (estate == "Deep Blue States")  {estate= deepBlueState}
-      else if (estate == "Red States")   {estate =electoralRed}
       else if (estate == "Deep Red States")   {estate =deepRedState}
       else if (estate == "All States")   {estate = electoralAll}
-      else if (estate == "Flattening Spectrum"){estate = c("Brazil","China","Russia","South_Korea","Switzerland","Germany","Iceland","USA","Croatia", "Sweden","Deep _Red State","Deep Blue State","Chile")}
       else if (estate == "Europe")       {estate= unique(allData$state[allData$continentExp=="Europe" ])}
       else if (estate == "Americas")     {estate= unique(allData$state[allData$continentExp=="Americas"])}
       else if (estate == "Oceania")      {estate= unique(allData$state[allData$continentExp=="Oceania"])}
       else if (estate == "Asia")         {estate= unique(allData$state[allData$continentExp=="Asia"   ])}
       else if (estate == "Africa")       {estate= unique(allData$state[allData$continentExp=="Africa" ])}
-      else if (estate == "Newton vs.")   {estate= c("Newton","MA","USA","World","Deep _Red State","Deep Blue State")}
       else if (estate == "All Countries"){estate= unique(worldData$state)}
       data = allData[grepl(paste(estate,collapse = "|"),allData$state),]}
   }) #catch bad old hyperlinks with try
@@ -1183,13 +1160,8 @@ rawdata <- reactive({
         estate = input$cregion
         if (estate == "IR BE FR GE MA")       {estate=c("Ireland","Belgium","France","Germany","MA")}
         else if (estate == "Deep Red vs. Deep Blue") {estate=c("Deep _Red State","Deep Blue State")}
-        else if (estate == "Blue States")  {estate= electoralBlue}
-        else if (estate == "Blue States No CA")  {estate= electoralBlueMinusCA}
         else if (estate == "Deep Blue States")  {estate= deepBlueState}
-        else if (estate == "Red States")   {estate =electoralRed}
         else if (estate == "Deep Red States")   {estate =deepRedState}
-        else if (estate == "All States")   {estate = electoralAll}
-        else if (estate == "Flattening Spectrum"){estate = c("Brazil","China","Russia","South_Korea","Switzerland","Germany","Iceland","USA","Croatia", "Sweden","Deep _Red State","Deep Blue State","Chile")}
         else if (estate == "Europe")       {estate= unique(allData$state[allData$continentExp=="Europe" ])}
         else if (estate == "Americas")     {estate= unique(allData$state[allData$continentExp=="Americas"])}
         else if (estate == "Oceania")      {estate= unique(allData$state[allData$continentExp=="Oceania"])}
@@ -1219,10 +1191,9 @@ exportdata=reactive({
   "pop",
   "positive",
   "positiveIncrease",
-  "positiveIncremental",
+  "fracPositiveIncrease",
   "death",
   "deathIncrease",
-  "deathIncremental",
   "fracDeathIncrease",
   "people_vaccinated",
   "daily_vaccinations",
@@ -1278,8 +1249,6 @@ observeEvent(input$refreshButton,{
     forceRefresh=TRUE
     amerData     <<- get_amer_data(refresh|forceRefresh)
     worldData    <<- get_world_data(refresh|forceRefresh)
-    #newtonData   <<- get_newton_data() 
-    print("aggregating")
     USStateData         <<- region_aggregate( amerData[ grepl( paste(electoralAll,  collapse="|"), amerData$state), ],  "US States") #doesn't sum states without final entries. has hospitalization data 
     deepBlueStateData   <<- region_aggregate( amerData[ grepl( paste(deepBlueState, collapse="|"), amerData$state), ],  "Deep Blue State")
     deepRedStateData    <<- region_aggregate( amerData[ grepl( paste(deepRedState,  collapse="|"), amerData$state), ],  "Deep _Red State")
@@ -1293,6 +1262,7 @@ observeEvent(input$refreshButton,{
     print("save")
     save(amerData,worldData,allData, file = "cache/alldata.RData")
     print("saved")
+    print(Sys.time())
     },ignoreNULL=TRUE) 
     
  }
@@ -1304,7 +1274,17 @@ ui     <- function(request){
   ccFun =  function(){unique(customData$state)}
   rcFun =  function(){unique(allData$state)}
   
-  customFun = function() {return(c(c("IR BE FR GE MA"),c("Flattening Spectrum"), c("Deep Red vs. Deep Blue"),c("Red States"), c("Deep Red States"), c("Blue States"), c("Deep Blue States"), c("Blue States No CA"),c("All States"),c("Europe"),c("Americas"),c("Africa"),c("Asia"),c("Oceania"), c("All Countries"), c("Newton vs.")))}
+  customFun = function() {return(c(c("IR BE FR GE MA"),
+                                   c("Deep Red vs. Deep Blue"),
+                                   c("Deep Red States"),
+                                   c("Deep Blue States"), 
+                                   c("All States"),
+                                   c("Europe"),
+                                   c("Americas"),
+                                   c("Africa"),
+                                   c("Asia"),
+                                   c("Oceania"), 
+                                   c("All Countries")))}
   fluidPage(
     titlePanel("Covid-19 Data & Forecasts"),
     sidebarLayout(
@@ -1370,11 +1350,8 @@ if (refresh|forceRefresh) {
   USStateData           = region_aggregate( amerData[ grepl( paste(electoralAll,  collapse="|"), amerData$state), ],  "US States") #doesn't sum states without final entries. has hospitalization data 
   deepBlueStateData     = region_aggregate( amerData[ grepl( paste(deepBlueState, collapse="|"), amerData$state), ],  "Deep Blue State")
   deepRedStateData      = region_aggregate( amerData[ grepl( paste(deepRedState,  collapse="|"), amerData$state), ],  "Deep _Red State")
-  blueStateData         = region_aggregate( amerData[ grepl( paste(electoralBlue, collapse="|"), amerData$state), ],  "VoteBlueState")
-  blueStateDataminusCA  = region_aggregate( amerData[ grepl( paste(electoralBlueMinusCA, collapse="|"), amerData$state), ],  "VoteBlueStateNoCali")
-  redStateData          = region_aggregate( amerData[ grepl( paste(electoralRed,  collapse="|"), amerData$state), ],  "Vote_RedState")
   worldData    = rbind(worldData,USStateData)
   world        = region_aggregate(worldData,"World")
-  allData      = rbind(amerData,worldData,world,deepBlueStateData,deepRedStateData,blueStateData,redStateData,USStateData) 
+  allData      = rbind(amerData,worldData,world,deepBlueStateData,deepRedStateData) 
   save(amerData,worldData,allData, file = "cache/alldata.RData")}
 shinyApp(ui = ui, server = server,  enableBookmarking = "url")
