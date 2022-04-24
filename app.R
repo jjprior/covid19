@@ -45,12 +45,6 @@ electoralAll  = c(electoralRed,electoralBlue)
 
 source("awskey.R",local=TRUE)
 
-Sys.setenv(
-  AWS_ACCESS_KEY_ID = "AKIAXK4XXPBAQBH5OX6B",
-  AWS_SECRET_ACCESS_KEY = "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",
-  AWS_REGION = "us-east-1"
-)
-
 
 save_object(object = "s3://appjackpriororg/alldata.RData", file = "cache/alldata.RData")
 
