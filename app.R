@@ -1,10 +1,10 @@
 rm(list=ls())
-# Covid19 Analysis http://app.jackprior.org 
+# Covid19 Analysis http://app.jackprior.org
 # Jack Prior covid19@jackprior.org, https://covid19.jackprior.org
 # Licence: https://www.gnu.org/licenses/gpl-3.0.en.html
 # reduce messages on shiny server at startup-------
-shhh <- suppressPackageStartupMessages 
-shhh(library(curl)) 
+shhh <- suppressPackageStartupMessages
+shhh(library(curl))
 shhh(library(jsonlite))
 shhh(library(lubridate))
 shhh(library(stringr))
@@ -13,6 +13,7 @@ shhh(library(scales))
 shhh(library(tidyverse))
 shhh(library(reshape2))
 shhh(library(plotly))
+shhh(library(aws.s3))
 library(data.table)
 # set some global values for program-----------
 maxAge = 999
@@ -26,9 +27,9 @@ defaultforecastdays = 50  #default forward forecasting
 projectDays         = 7  #Days to project out for ranking case growth rate
 caseRankThreshold   = 500 #min # of cases to be included in "ALL" rankings
 deathRankThreshold  = 50  #min # of deaths to be included in "ALL" rankings
-assumedError        = .5  # 30% 3 sigma -- THIS SHOULD BE CODED based on fits eventually. 
+assumedError        = .5  # 30% 3 sigma -- THIS SHOULD BE CODED based on fits eventually.
 numDHotspots           = 0 # number of hot spots in drop down.
-numCHotspots           = 5 # number of hot spots in drop down. 
+numCHotspots           = 5 # number of hot spots in drop down.
 sicktime = 21
 hotrange =14
 uMax                = 0.2 #maximum growth rate for hot spot rankings
@@ -40,8 +41,28 @@ deepRedState  = c("AL", "AK","AR", "ID","KS", "KY", "LA","MS","MT","NE","ND","OK
 electoralBlue = c("CA", "NY", "IL", "NJ", "VA", "MA", "MD", "MN", "CO","WA", "CT", "OR", "NV", "NM", "NH", "RI", "DE", "HI", "VT", "ME")
 electoralRed  = c("AK", "MT", "ND", "SD", "WY", "ID", "NE", "WV", "AR","IA", "KS", "MS", "UT", "OK", "KY", "LA", "AL", "SC", "MO", "WI", "AZ", "IN", "TN","NC", "GA", "MI", "OH", "PA", "FL", "TX")
 electoralAll  = c(electoralRed,electoralBlue)
+
+
+source("awskey.R",local=TRUE)
+
+Sys.setenv(
+  AWS_ACCESS_KEY_ID = "AKIAXK4XXPBAQBH5OX6B",
+  AWS_SECRET_ACCESS_KEY = "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",
+  AWS_REGION = "us-east-1"
+)
+
+
+save_object(object = "s3://appjackpriororg/alldata.RData", file = "cache/alldata.RData")
+
+
+echomsg <- function(inc,txt=NULL) {
+  try(incProgress(inc,txt))
+  cat(file = stderr(), paste0(paste(Sys.time(), txt, "\n")))
+}
+
+
 #GET DATA FROM WEB Or DISK--------------------------------------------------------
-get_world_data = function(refreshData=TRUE){  
+get_world_data = function(refreshData=TRUE){ 
   #Load world data from web, backup load from disk
   if (refreshData){
     try({
@@ -54,8 +75,11 @@ get_world_data = function(refreshData=TRUE){
         tests_units = col_character()   )
       
       worlddata = read_csv("https://covid.ourworldindata.org/data/owid-covid-data.csv",col_types = worldcols)
-      
       saveRDS(worlddata,"cache/worlddata.Rdu")
+      put_object(
+        file = "cache/worlddata.Rdu", 
+        object = "worlddata.Rdu", 
+        bucket = "appjackpriororg")
       
       vaxcols= cols(
         location = col_character(),
@@ -71,7 +95,13 @@ get_world_data = function(refreshData=TRUE){
         people_fully_vaccinated_per_hundred = col_double(),
         daily_vaccinations_per_million = col_double()  )
       rvac = read_csv("https://raw.githubusercontent.com/owid/covid-19-data/master/public/data/vaccinations/vaccinations.csv",col_types=vaxcols)
-      saveRDS(rvac,"cache/rvacworld.Rdu")} )  } #end of If try
+      saveRDS(rvac,"cache/rvacworld.Rdu")
+      put_object(
+        file = "cache/rvacworld.Rdu", 
+        object = "rvacworld.Rdu", 
+        bucket = "appjackpriororg")
+      
+      })  } #end of If try
   
   rvac      = readRDS(file="cache/rvacworld.Rdu")
   cn = colnames(rvac)
@@ -82,25 +112,25 @@ get_world_data = function(refreshData=TRUE){
   rvac = select(rvac,rdate, state,total_vaccinations,people_vaccinated, people_fully_vaccinated,daily_vaccinations)
   
   ##Load World Data Cache
-  print("loading world data cache")
+  echomsg(0.05,"loading world data cache")
   x    = readRDS(file="cache/worlddata.Rdu")
   x     = x %>% select(date,location, total_cases, total_deaths)
   x$date = parse_date_time(x$date,"ymd")
   colnames(x)= c("rdate","state","positive","death")
   
-  print("merging vax data")
+  echomsg(0.05,"merging vax data")
   x= merge(x,rvac,by=c("rdate","state"),all.x=TRUE)
-  x$daily_vaccinations[is.na(x$daily_vaccinations)]=0   
+  x$daily_vaccinations[is.na(x$daily_vaccinations)]=0  
   
   load("worldpops.Rda")
   pops$state = str_replace_all(pops$state,"_"," ")
   x = merge(x,pops, by="state")  #US excluded by not being in pops table
   x$continentExp="All"
   x            = x[order(x$rdate),]
-  for (s in unique(x$state)){ 
+  for (s in unique(x$state)){
     index = (x$state == s)
     y = x[index,]
-    y$positiveIncrease =  calc_daily(y$positive) 
+    y$positiveIncrease =  calc_daily(y$positive)
     y$deathIncrease =    calc_daily(y$death)
     y$VaxedIncrease      = calc_daily(y$people_vaccinated)
     y$fullyVaxedIncrease = calc_daily(y$people_fully_vaccinated)
@@ -111,14 +141,14 @@ get_world_data = function(refreshData=TRUE){
     x$VaxedIncrease[index]       = y$VaxedIncrease
   }
   
-  x$hosp             = NA  
+  x$hosp             = NA 
   x$hospIncrease     = NA
   x$test             = NA
   x$testIncrease     = NA
   x$continentExp      = NA
-  print("covid calcs")
+  echomsg(0.05,"covid calcs")
   x = covid_calc(x)
-  print("done with calc")
+  echomsg(0.05,"done with calc")
   return(x)}
 
 get_amer_data     <- function(refreshData=TRUE){
@@ -133,8 +163,14 @@ get_amer_data     <- function(refreshData=TRUE){
     )
     data = read_csv("https://raw.githubusercontent.com/nytimes/covid-19-data/master/us-states.csv", col_types =  ct)
     saveRDS(data,file="cache/AmerDataCache.Rdu")
-    
-    print("Getting US vaccine data from github source")    
+    put_object(
+      file = "cache/AmerDataCache.Rdu", 
+      object = "AmerDataCache.Rdu", 
+      bucket = "appjackpriororg")})}
+
+  
+  if (refreshData){try({
+    #echomsg(0.05,"Getting US vaccine data from github source")   
     col_types= cols(
       date = col_date(format = ""),
       location = col_character(),
@@ -151,7 +187,11 @@ get_amer_data     <- function(refreshData=TRUE){
       daily_vaccinations_per_million = col_double(),
       share_doses_used = col_double())
     rvac = read_csv("https://raw.githubusercontent.com/owid/covid-19-data/master/public/data/vaccinations/us_state_vaccinations.csv",col_types=col_types)
-    saveRDS(rvac,file="cache/rvacUS.Rdu")   })}
+    saveRDS(rvac,file="cache/rvacUS.Rdu") 
+    put_object(
+      file = "cache/rvacUS.Rdu", 
+      object = "rvacUS.Rdu", 
+      bucket = "appjackpriororg")})}
   
   rvac=readRDS(file="cache/rvacUS.Rdu")
   cn = colnames(rvac)
@@ -162,7 +202,7 @@ get_amer_data     <- function(refreshData=TRUE){
   rvac$state = state.abb[match(rvac$state,state.name)]
   
   rvac = select(rvac,rdate, state,total_vaccinations,people_vaccinated, people_fully_vaccinated,daily_vaccinations)
-  print("reading us data cache")
+  echomsg(0.05,"reading us data cache")
   data              = readRDS(file="cache/AmerDataCache.Rdu")
   colnames(data) = c("date", "state","fips","positive", "death")
   
@@ -186,10 +226,10 @@ get_amer_data     <- function(refreshData=TRUE){
   #data        = data[,c("date","positive","death","positiveIncrease","deathIncrease","hospIncrease","hosp","test","state","continentExp")]
   data$rdate  = parse_date_time(data$date,orders = "%y%m%d")
   
-  print("merging state vac data")
+  echomsg(0.05,"merging state vac data")
   data = merge(data,rvac,by=c("rdate","state"),all.x=TRUE)
-  data$daily_vaccinations[is.na(data$daily_vaccinations)]=0   
-  #data$total_vaccinations[is.na(data$total_vaccinations)]=0   
+  data$daily_vaccinations[is.na(data$daily_vaccinations)]=0  
+  #data$total_vaccinations[is.na(data$total_vaccinations)]=0  
   
   spops       = read.csv("statepopstable.csv")  #spreadsheet of state populations
   data$test[data$state=="PR"]  = NA #faulty data
@@ -197,9 +237,9 @@ get_amer_data     <- function(refreshData=TRUE){
   data$pop           = NA  #initialize population column
   data$testIncrease  = NA
   
-  for (s in unique(data$state)){  #add population data 
+  for (s in unique(data$state)){  #add population data
     index                    = (data$state == s)
-    data$pop[index]          = get_state_pop(s,spops)  
+    data$pop[index]          = get_state_pop(s,spops) 
     # data$testIncrease[index]      = calc_daily(data$test[index])
     
     data$VaxedIncrease[index]      = calc_daily(data$people_vaccinated[index])
@@ -210,9 +250,9 @@ get_amer_data     <- function(refreshData=TRUE){
   
   data        = covid_calc(data)          #Adds calculated fields
   
-  data        = subset( data, select = -date ) 
+  data        = subset( data, select = -date )
   data        = data[,order(colnames(data))] #order columns for easier rbind match up check
-
+  
   return(data)}
 
 calc_daily <- function(x){
@@ -226,7 +266,7 @@ get_sewer_data  <- function(){
 }
 
 region_aggregate <- function(data,state="World"){ #sum up countries to world or states to USA
-  #this doesn't deal with incomplete data for a country in final days and give smaller counts than full at end. 
+  #this doesn't deal with incomplete data for a country in final days and give smaller counts than full at end.
   data = data[data$rdate < Sys.Date() , ] #avoid partial data for "today"
   Regionpositive               = aggregate(positive~rdate,             data = data, FUN =  sum, na.rm =TRUE, na.action = NULL)
   RegionpositiveIncrease       = aggregate(positiveIncrease~rdate,     data = data, FUN =  sum, na.rm =TRUE, na.action = NULL)
@@ -261,7 +301,7 @@ region_aggregate <- function(data,state="World"){ #sum up countries to world or 
     Regionhosp          = aggregate(hosp~rdate,                   data = data, FUN = sum, na.rm = TRUE, na.action = NULL)
     RegionhospIncrease  = aggregate(hospIncrease~rdate,           data = data, FUN = sum, na.rm = TRUE, na.action = NULL)
     Regiondata          = merge(Regiondata,Regionhosp,         by ="rdate", all = T)
-    Regiondata          = merge(Regiondata,RegionhospIncrease, by ="rdate", all = T)   
+    Regiondata          = merge(Regiondata,RegionhospIncrease, by ="rdate", all = T)  
     Regiondata          = merge(Regiondata,Regiontest,         by ="rdate", all = T)
     Regiondata          = merge(Regiondata,RegiontestIncrease, by ="rdate", all = T)
     Regiondata$continentExp = "US States"
@@ -276,8 +316,8 @@ region_aggregate <- function(data,state="World"){ #sum up countries to world or 
   Regiondata       = covid_calc(Regiondata)
   return(Regiondata)}
 
-get_state_pop <- function(estate,spops){ 
-  #get US population data from a csv file sourced data frame. 
+get_state_pop <- function(estate,spops){
+  #get US population data from a csv file sourced data frame.
   index= (spops$State==estate)
   if (sum(index)==1){pop = as.numeric(spops$Pop[index])}else{pop=NA}
   return(pop)}
@@ -286,7 +326,7 @@ get_state_pop <- function(estate,spops){
 project_growth_rate <- function(x,s,totfeature,fracfeature){
   #project case, death, etc growth rate "projectDays" into the future -- measures severity of flattening issues for ranking
   fit =  get_growth(x,s,fracfeature, Sys.Date()-distwindow,Sys.Date())
-  ##if ( !is.na(fit[2]) ) {if (fit[2]>0) {fit[2]=0}}#don't ramp if positive assume current stays 
+  ##if ( !is.na(fit[2]) ) {if (fit[2]>0) {fit[2]=0}}#don't ramp if positive assume current stays
   return(fit[1]*exp(fit[2]*projectDays))}
 
 growth_rate_decline_rate <- function(x,s,totfeature,fracfeature){
@@ -296,8 +336,8 @@ growth_rate_decline_rate <- function(x,s,totfeature,fracfeature){
 
 project_total_growth_rate <- function(x,s,totfeature,fracfeature,t){
   #We want to know what regions will be moving danger zone over a certain period of time.   We know how the growth rate
-  #is changing, but don't want to assume growth rate will climb further if its trending up, so we cap climbing growth rate 
-  #at the current value.   
+  #is changing, but don't want to assume growth rate will climb further if its trending up, so we cap climbing growth rate
+  #at the current value.  
   #
   # x(t) = x(o) * exp ( u(t) * t)      |solution if u was constant
   # u(t) = u(o) * exp (k * t)   |constrain fit(2) <= 0 as growth won't go up forever, but head to constant exponential
@@ -314,7 +354,7 @@ project_total_growth_rate <- function(x,s,totfeature,fracfeature,t){
   Xo = tail(X,1)
   ut = uo*exp(k*t)
   if (ut>0.3){ut=0.3}
-  uavg = (ut+uo)/2 
+  uavg = (ut+uo)/2
   if (uavg>uMax){uavg = uMax}
   if (ut>uMax){ut = uMax}
   total_growth = Xo * exp(uavg * t) * ut
@@ -345,9 +385,9 @@ covid_calc <- function(x){
   x$fracDeathIncrease        = NA
   x$fracPositiveIncreaseEst  = NA
   x$fracTestIncrease         = NA
-  x$mday                     = as.numeric(difftime(x$rdate,Sys.Date(),units=c("days"))) #need to regress against days relative to today. 
-  x =  x[with(x,order(rdate)),]  
-  for (s in unique(x$state)){#calculated day over day growth frac (rates) in cases, etc. 
+  x$mday                     = as.numeric(difftime(x$rdate,Sys.Date(),units=c("days"))) #need to regress against days relative to today.
+  x =  x[with(x,order(rdate)),] 
+  for (s in unique(x$state)){#calculated day over day growth frac (rates) in cases, etc.
     index= (x$state==s)
     x[index,] = calc_growth_since_last_change(x[index,],"positiveIncrease",    "positive",    "fracPositiveIncrease")
     x[index,] = calc_growth_since_last_change(x[index,],"positiveIncreaseEst", "positiveEst", "fracPositiveIncreaseEst")
@@ -404,20 +444,20 @@ get_growth       <- function(adata,estate, yffeature, sSocialDist, eSocialDist){
   return(c(exp(model$coefficients[1]),model$coefficients[2]))}
 
 get_pct_complete <- function(x,  lookahead, sSocialDist, eSocialDist){
-  #estimate % complete epidemic for a state - not used yet. 
-  x =  x[with(x,order(rdate)),]  
+  #estimate % complete epidemic for a state - not used yet.
+  x =  x[with(x,order(rdate)),] 
   thestates = unique(x$state)
   for (s in thestates){
-    index= (x$state==s) 
-    x$pctPositiveComplete[index]    = x$positive[index]   /  max(-Inf,calc_forecast(x,s,"positive",    "positiveIncrease",    "fracPositiveIncrease",   lookahead,sSocialDist, eSocialDist)$positive)     
-    x$pctDeathComplete[index]       = x$death[index]      /  max(-Inf,calc_forecast(x,s,"death",       "deathIncrease",       "fracDeathIncrease",      lookahead,sSocialDist, eSocialDist)$death)       
+    index= (x$state==s)
+    x$pctPositiveComplete[index]    = x$positive[index]   /  max(-Inf,calc_forecast(x,s,"positive",    "positiveIncrease",    "fracPositiveIncrease",   lookahead,sSocialDist, eSocialDist)$positive)    
+    x$pctDeathComplete[index]       = x$death[index]      /  max(-Inf,calc_forecast(x,s,"death",       "deathIncrease",       "fracDeathIncrease",      lookahead,sSocialDist, eSocialDist)$death)      
     x$pctFullyVaxedComplete[index] = x$people_fully_vaccinated[index]/  x$pop[index]
     x$pctVaxedComplete[index] = x$people_vaccinated[index]/  x$pop[index]
     x$pctHospComplete[index]        = x$hosp[index]       /  max(-Inf, calc_forecast(x,s,"hosp",        "hospIncrease",        "fracHospIncrease",       lookahead,sSocialDist, eSocialDist)$hosp) }
   return(x)}
 
 growth_estimate  <- function(date0,mday0,x0,lookahead,lookback, m){
-  #create forecast from model 
+  #create forecast from model
   a      = unname(coef(m)[1])  #log(fracpostivve growth rate at date 0 fit)
   b      = unname(coef(m)[2])  #time constant for fracpositive growth rate decline
   if (exp(a)>0.3){
@@ -426,7 +466,7 @@ growth_estimate  <- function(date0,mday0,x0,lookahead,lookback, m){
   k      <- function(t){
     x= exp(a)*exp(b*t)
     if (x>0.15){x=.15}  #Restrict growth in "2nd wave" to 15% for now
-    return(x)}   #frac positive growth rates 
+    return(x)}   #frac positive growth rates
   l      = lookahead
   y      = seq(1,lookahead,1) # initialize
   yy     = seq(1,lookback,1) # initialize
@@ -440,10 +480,10 @@ growth_estimate  <- function(date0,mday0,x0,lookahead,lookback, m){
 }
 
 indexFit <- function(data,cstate,sSocialDist,eSocialDist,fracfeaturestr){
-  index =          (data$state == cstate) & 
-    (data$rdate >= sSocialDist) & 
-    (data$rdate <= eSocialDist) & 
-    (data[[fracfeaturestr]]>0) & 
+  index =          (data$state == cstate) &
+    (data$rdate >= sSocialDist) &
+    (data$rdate <= eSocialDist) &
+    (data[[fracfeaturestr]]>0) &
     (!is.na(data[[fracfeaturestr]]))
   return(index)}
 
@@ -453,7 +493,7 @@ canBeFit = function(data,cstate,sSocialDist,eSocialDist,fracfeaturestr){
   return(result)}
 
 calc_forecast    <- function(data,cstate,totfeaturestr,increasefeaturestr, fracfeaturestr,lookahead,sSocialDist, eSocialDist){
-  #calculate a fitted/forecasted total, daily, and growthrate for cases, estimated cases, deaths and hospitalizations. 
+  #calculate a fitted/forecasted total, daily, and growthrate for cases, estimated cases, deaths and hospitalizations.
   data = data[data$state==cstate,]
   data$totfeature =  data[[totfeaturestr]]
   data$fracfeature = data[[fracfeaturestr]]
@@ -488,7 +528,7 @@ calc_forecast    <- function(data,cstate,totfeaturestr,increasefeaturestr, fracf
   else { cases   =NA
   newcases =NA}
   x[[totfeaturestr]] = cases
-  x[[increasefeaturestr]] = newcases 
+  x[[increasefeaturestr]] = newcases
   x[[fracfeaturestr]] = newcases/cases
   return(as.data.frame(x))}
 
@@ -506,11 +546,11 @@ ma            <- function(x, n = 7){
 get_hot_spots = function (nowdata,numHotspots=4){
   return(c(get_hot_spots_by(nowdata,"projectedCaseGrowth",numCHotspots),get_hot_spots_by(nowdata,"projectedDeathGrowth",numDHotspots)))
 }
-get_hot_spots_by = function(nowdata,sfeature,n){ 
-  nowdata$feature = nowdata[[sfeature]]                       #make the summarized feature accessible.   
-  nowdata         = nowdata[!is.na(nowdata$feature) & (nowdata$rdate > ( Sys.Date() - hotrange ) ) & ( nowdata$rdate < Sys.Date() ), ] # limiit to last week non NA 
+get_hot_spots_by = function(nowdata,sfeature,n){
+  nowdata$feature = nowdata[[sfeature]]                       #make the summarized feature accessible.  
+  nowdata         = nowdata[!is.na(nowdata$feature) & (nowdata$rdate > ( Sys.Date() - hotrange ) ) & ( nowdata$rdate < Sys.Date() ), ] # limiit to last week non NA
   nowdata         = nowdata[( (nowdata$positive>caseRankThreshold) & (nowdata$death>deathRankThreshold)),]    #limit to major regions
-  nowdata$feature = nowdata$feature 
+  nowdata$feature = nowdata$feature
   nowdata         = nowdata[!is.na(nowdata$feature),]
   nowdata         = select(nowdata,c(state,feature))
   states          = unique(nowdata$state)
@@ -519,7 +559,7 @@ get_hot_spots_by = function(nowdata,sfeature,n){
   newdata$feature=NA
   for ( s in states ){
     index1 = nowdata$state == s
-    index2 = newdata$state == s 
+    index2 = newdata$state == s
     newdata$feature[index2] = mean(nowdata$feature[index1]) } #consider using sum/days
   nowdata  = newdata
   nowdata  = nowdata[order(-nowdata$feature),]
@@ -533,24 +573,24 @@ main_title    <- function(s,gr=""){ggtitle(paste(  str_replace( str_replace_all(
 p_add_vline      <- function(vdate){
   p = geom_vline(aes(xintercept =   as.numeric(as.POSIXct(vdate))))
   return(p)
-  } # add vertical line on date plots
+} # add vertical line on date plots
 
 plot_unavailable <- function(txt=""){ggplot() + ggtitle(paste("Report unavailable",txt))} #for menu choices with no data
 
 p_log_scale   <- function(p,plotlog,pct=0){
   #set Y axis as log or not and format accordingly, noting if it is a percent unit
   breaks <- 10^(-10:10)
-  minor_breaks <- rep(1:9, 21)*(10^rep(-10:10, each=9))  
+  minor_breaks <- rep(1:9, 21)*(10^rep(-10:10, each=9)) 
   if ((plotlog==1)&(pct==0)) {p=p+scale_y_log10(breaks = breaks, minor_breaks = minor_breaks, labels = scales::comma) }
   if ((plotlog==1)&(pct==1)) {p=p+scale_y_log10(breaks = breaks, minor_breaks = minor_breaks, labels=scales::percent)}
   if ((plotlog==0)&(pct==0)) {p=p+scale_y_continuous(labels = scales::comma)}
   if ((plotlog==0)&(pct==1)) {p=p+scale_y_continuous(labels = scales::percent)}
-  return(p)} 
+  return(p)}
 
-p_log_scaleX  <- function(p,plotlog,pct=0){ 
-  #set X axis as log or not and format 
+p_log_scaleX  <- function(p,plotlog,pct=0){
+  #set X axis as log or not and format
   breaks <- 10^(-10:10)
-  minor_breaks <- rep(1:9, 21)*(10^rep(-10:10, each=9))  
+  minor_breaks <- rep(1:9, 21)*(10^rep(-10:10, each=9)) 
   if ((plotlog==1)&(pct==0)) {p=p+scale_x_log10(breaks = breaks, minor_breaks = minor_breaks) }
   if ((plotlog==1)&(pct==1)) {p=p+scale_x_log10(breaks = breaks, minor_breaks = minor_breaks, labels=scales::percent)}
   if ((plotlog==0)&(pct==0)) {p=p+scale_x_continuous(labels = scales::comma)}
@@ -560,7 +600,7 @@ p_log_scaleX  <- function(p,plotlog,pct=0){
 lm_ln_eqn  <- function(m){
   #return correlation equation string for putting on plots
   eq = format(summary(m)$r.squared, digits = 3)
-  #eq <- substitute(italic(y) == a  %.% " exp("* b %.% italic(x)*"),"~~italic(r)^2~"="~r2, 
+  #eq <- substitute(italic(y) == a  %.% " exp("* b %.% italic(x)*"),"~~italic(r)^2~"="~r2,
   #                 list(a = format(unname(exp(coef(m)[1])), digits = 2),
   #                      b = format(unname(coef(m)[2]), digits = 2),
   #                      r2 = format(summary(m)$r.squared, digits = 3)))
@@ -585,10 +625,10 @@ mid_point   <- function(x, ht=0.5){ # place scaled amongst data for annotation.
 
 format_plot <- function(p, estate, ytitle, plotlog,sSocialDist,eSocialDist,pct=0){
   # format plots generally
-  p = p + theme(axis.title.x=element_blank()) 
+  p = p + theme(axis.title.x=element_blank())
   p = p + theme(legend.title=element_blank())
   p = p + theme(plot.caption = element_text(hjust = 0))
-  p = p + labs(caption=main_caption(sSocialDist,eSocialDist)) 
+  p = p + labs(caption=main_caption(sSocialDist,eSocialDist))
   p = p + main_title(estate)
   try({p=p_log_scale(p,plotlog,pct) })
   return(p)}
@@ -599,7 +639,7 @@ format_date_plot <- function(p, estate, ytitle, plotlog,sSocialDist,eSocialDist,
   p = format_plot(p, estate, ytitle, plotlog,sSocialDist,eSocialDist,pct)
   p = p + scale_x_datetime(date_labels = "%d%b", date_breaks = "1 month")
   p = p + ylab(ytitle)
-  p = p + theme(axis.title.x = element_text(size = 0)) 
+  p = p + theme(axis.title.x = element_text(size = 0))
   try({p = p + p_add_vline(as.Date(sSocialDist))+p_add_vline(as.Date(eSocialDist))})
   return(p)}
 
@@ -607,7 +647,7 @@ format_bar_plot  <- function(p, estate, ytitle, plotlog,sSocialDist,eSocialDist,
   # format bar plots
   p = format_plot(p, estate, ytitle, plotlog,sSocialDist,eSocialDist,pct)
   p = p + coord_flip()
-  p = p + theme(axis.title.y=element_blank()) 
+  p = p + theme(axis.title.y=element_blank())
   return(p)}
 
 format_legend = function(p,estate){ if (length(estate)<11){p = p + theme(legend.position = "bottom")}else {p = p + theme(legend.position = "none")}}
@@ -622,10 +662,10 @@ plot_feature        <- function(sdata,feature,ftitle,cstate,plotlog,lookahead,sS
   overlay = length(cstate)>1
   if (overlay) {sdata$flegend=sdata$state} else {sdata$flegend = feature}
   sdata   = subset(sdata, grepl(paste(cstate,collapse="|"),state) & !is.na(y) & y>0)
-  if (nrow(sdata)==0){return(plot_unavailable())}  
+  if (nrow(sdata)==0){return(plot_unavailable())} 
   for (s in cstate){sdata$movingAvg[sdata$state==s] = as.numeric(ma(sdata$y[sdata$state==s],7)) }
   ispct=is_pct_axis(feature,"NA")
-  p=ggplot()  
+  p=ggplot() 
   if (!overlay){p = p+geom_point(sdata, mapping=aes(x=rdate,y=y,color=flegend))}
   p = p + geom_line(data = sdata    , mapping =aes(x = rdate, y = movingAvg, colour = flegend))
   for (s in cstate){p= p+p_annotate(sdata$rdate[sdata$state==s],sdata$movingAvg[sdata$state==s],plotlog,s)}
@@ -641,13 +681,13 @@ plot_xy        <- function(sdata,xfeature,yfeature, ftitle,cstate,plotlog,lookah
   overlay = length(cstate)>1
   if (overlay) {sdata$flegend=sdata$state} else {sdata$flegend = feature}
   sdata   = subset(sdata, grepl(paste(cstate,collapse="|"),state) & !is.na(y) & !is.na(x))
-  if (nrow(sdata)==0){return(plot_unavailable())}  
+  if (nrow(sdata)==0){return(plot_unavailable())} 
   for (s in cstate){
     sdata$movingAvg[sdata$state==s] = as.numeric(ma(sdata$y[sdata$state==s],7))
     sdata$movingAvgX[sdata$state==s] = as.numeric(ma(sdata$x[sdata$state==s],7)) }
   
   ispct=is_pct_axis(yfeature,"NA")
-  p=ggplot()  
+  p=ggplot() 
   
   if (!overlay){p = p+geom_point(sdata, mapping=aes(x=x,y=y,color=flegend))}
   p = p + geom_line(data = sdata    , mapping =aes(x = movingAvgX, y = movingAvg, colour = flegend))
@@ -656,13 +696,13 @@ plot_xy        <- function(sdata,xfeature,yfeature, ftitle,cstate,plotlog,lookah
   p = format_legend(p,cstate)
   return(p)}
 
-plot_now_summary    <- function(nowdata, focusplot, plotlog, normalize, sfeature, sSocialDist, eSocialDist, nStates = 40, lookahead = NA ){ 
+plot_now_summary    <- function(nowdata, focusplot, plotlog, normalize, sfeature, sSocialDist, eSocialDist, nStates = 40, lookahead = NA ){
   #plot ranked bar graphs
-  nowdata$feature = nowdata[[sfeature]]                       #make the summarized feature accessible.   
-  nowdata         = nowdata[ (nowdata$rdate > ( Sys.Date() - 8 ) ) & ( nowdata$rdate < Sys.Date() ), ] # limiit to last week 
+  nowdata$feature = nowdata[[sfeature]]                       #make the summarized feature accessible.  
+  nowdata         = nowdata[ (nowdata$rdate > ( Sys.Date() - 8 ) ) & ( nowdata$rdate < Sys.Date() ), ] # limiit to last week
   nowdata         = nowdata[!is.na(nowdata$feature),]         # limit to non-NA values
   if (sum(grepl("France",nowdata$state))>0){nowdata = nowdata[( (nowdata$positive > caseRankThreshold) & (nowdata$death > deathRankThreshold)),]}
-  ispct = is_pct_axis(sfeature,focusplot)                     
+  ispct = is_pct_axis(sfeature,focusplot)                    
   if (!ispct & normalize){nowdata$feature = nowdata$feature / as.numeric(nowdata$pop) * 1e6
   nowdata          = nowdata[!is.na(nowdata$feature),]
   focusplot        = paste(focusplot,("(per million)"))}
@@ -688,7 +728,7 @@ plot_now_summary    <- function(nowdata, focusplot, plotlog, normalize, sfeature
   if (focusplot=="%Complete Est Cases Summary"){focusplot="%Est Cases done"}
   if (grepl("done",focusplot)){p = p +  geom_hline(aes(yintercept =  .9))}
   p = format_bar_plot(p,focusplot,"", plotlog,sSocialDist,eSocialDist,ispct)}
-  return(p)}   
+  return(p)}  
 
 plot_trend  <- function(p,pdata,estate,plotlog,totFeature,increaseFeature,fracFeature,flegend,lookahead,sSocialDist,eSocialDist,normalize,daily=FALSE,overlay=FALSE,allplot=FALSE){
   pdata$tot      = pdata[[totFeature]]
@@ -696,7 +736,7 @@ plot_trend  <- function(p,pdata,estate,plotlog,totFeature,increaseFeature,fracFe
   pdata$increase[pdata$increase<0]=NA
   
   pdata$frac     = pdata[[fracFeature]]
-  pdata          = subset(pdata,   grepl(paste(estate,collapse="|"),state) & !is.na(tot) & !is.na(increase)) 
+  pdata          = subset(pdata,   grepl(paste(estate,collapse="|"),state) & !is.na(tot) & !is.na(increase))
   if (normalize) { pdata$tot      = pdata$tot/pdata$pop*1e6     }
   if (normalize) { pdata$increase = pdata$increase/pdata$pop*1e6}
   if (nrow(pdata) == 0){return(p) }
@@ -719,7 +759,7 @@ plot_trend  <- function(p,pdata,estate,plotlog,totFeature,increaseFeature,fracFe
   forecast   = forecast[!is.na(forecast$increase),]}}
   
   
-  forecastOK = ( !is.null(forecast) ) & ( sum( !is.na( forecast$tot ) ) > 0 )       
+  forecastOK = ( !is.null(forecast) ) & ( sum( !is.na( forecast$tot ) ) > 0 )      
   
   if (!overlay){pdata$flegend    = flegend} else { pdata$flegend    = pdata$state}
   if (forecastOK) {if (!overlay){forecast$flegend = flegend} else {forecast$flegend = forecast$state}
@@ -738,13 +778,13 @@ plot_trend  <- function(p,pdata,estate,plotlog,totFeature,increaseFeature,fracFe
     else   {p = p + geom_point(data = pdata, mapping =aes(x = rdate,y = tot, colour = flegend)) }
     p = p + expand_limits(y = max(pdata$tot)*1.05)
     if (forecastOK){
-      if (!overlay){p = p + geom_line(data = forecast,mapping = aes(x = rdate,y = tot, colour = flegend),linetype="dashed") 
+      if (!overlay){p = p + geom_line(data = forecast,mapping = aes(x = rdate,y = tot, colour = flegend),linetype="dashed")
       p = p + expand_limits(y = max(forecast$tot)*1.05)
       p = p + p_annotate(pdata$rdate,    pdata$tot,    plotlog)
       p = p + p_annotate(forecast$rdate, forecast$tot, plotlog)}
       else {for (s in estate){
         p =  p + p_annotate(forecast$rdate[forecast$state == s],forecast$tot[forecast$state == s],plotlog,s)}}
-      p = p + geom_line(data = forecast,mapping = aes(x = rdate,y = tot, colour = flegend), linetype="dashed") 
+      p = p + geom_line(data = forecast,mapping = aes(x = rdate,y = tot, colour = flegend), linetype="dashed")
       p = p + expand_limits(y = max(forecast$tot)*1.05)}
     else {for (s in estate){p = p+p_annotate(pdata$rdate[index],pdata$tot[index],plotlog,s)}
     }}
@@ -765,12 +805,12 @@ plot_trend  <- function(p,pdata,estate,plotlog,totFeature,increaseFeature,fracFe
   index= (forecast$state==s)
   p = p+p_annotate(tail(forecast$rdate[index],1),tail(forecast$increase[index],1),plotlog,s)}}}
   
-  #General Plot Attributes for both Total and Daily     
+  #General Plot Attributes for both Total and Daily    
   if (daily)     {ytitle = "Daily Added"} else {ytitle = "Total"}
   
   if (!allplot){  ytitle = paste(ytitle,flegend) }
-  if (normalize) {ytitle = paste( ytitle, "(per million)" )     }    
-  if (!overlay)  {#p = p + scale_colour_manual("", breaks = c("Deaths", "Cases", "Hospitalizations","Tests","Vaccinations",""), values = c("red","black", "green","blue", "orange")) 
+  if (normalize) {ytitle = paste( ytitle, "(per million)" )     }   
+  if (!overlay)  {#p = p + scale_colour_manual("", breaks = c("Deaths", "Cases", "Hospitalizations","Tests","Vaccinations",""), values = c("red","black", "green","blue", "orange"))
     gtitle=estate}
   else {gtitle="" }#no title for overlays for now}
   
@@ -798,7 +838,7 @@ plot_cfr            <- function(data,cstate,plotlog,lookahead,sSocialDist,eSocia
 plot_total  <- function(data,estate,plotlog,showcase, showdeath, showtest, showhosp, showest,showrec, showvax,showvaxed,showfullyvaxed, lookahead,sSocialDist,eSocialDist, normalize, daily=FALSE,overlay=FALSE,allplot=FALSE) {
   #plot total and daily plots for 1 or more attributes - key routine in program.
   
-  showvax = 0 
+  showvax = 0
   
   p = ggplot() #p is additive
   if (is.null(estate)){return(p)}
@@ -851,7 +891,7 @@ plot_growth          <- function(focusplot, theTotField,thefracField,sdata,gstat
   newdates  = as.POSIXct(seq(min(sdata$rdate)-days(lookback),max(sdata$rdate)+days(lookahead), by="day"))
   newgrowth = exp(predict(model,newdays))
   
-  plotit2   = data.frame(rdate=newdates,mday=newdays,death="NA",yf=newgrowth) 
+  plotit2   = data.frame(rdate=newdates,mday=newdays,death="NA",yf=newgrowth)
   plotit2$flegend ="Fitted"
   
   annodate     = mid_point(plotit2$rdate,.66)
@@ -871,7 +911,7 @@ plot_growth          <- function(focusplot, theTotField,thefracField,sdata,gstat
   p = format_date_plot(p,ptitle,focusplot, plotlog ,sSocialDist,eSocialDist,1)
   p = format_legend(p,gstate)
   
-  return(p)} 
+  return(p)}
 
 #Plot Selection based on UI choices: identify_plot indentifies report to run and passes to generate_plot
 generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSocialDist,nStates){
@@ -887,19 +927,19 @@ generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSo
     plotlog=0
     normalize=FALSE
   }
-  else 
+  else
   {
     if (grepl(paste(input$options,collapse="|"),"log"))   {plotlog  = 1} else {plotlog  = 0} #changed from 0 1 boolean in interface late in game
     normalize    = grepl(paste(input$options,collapse="|"),"normalize")
     
   }
   try({
-    if (input$scope == "All")     {data = allData } #Choose the data to use 
+    if (input$scope == "All")     {data = allData } #Choose the data to use
     if (input$scope == "USA")     {data = amerData}
     if (input$scope == "World")   {data = worldData}
     
-    if (!input$hotspots){if ((input$scope == "All")   ) {estate = input$region}     
-      if ((input$scope == "World") ) {estate = input$country}   
+    if (!input$hotspots){if ((input$scope == "All")   ) {estate = input$region}    
+      if ((input$scope == "World") ) {estate = input$country}  
       if ((input$scope == "USA")   ) {estate = input$state}}
     else  {if ((input$scope == "All")   ) {estate = input$hregion}
       if ((input$scope == "World") ) {estate = input$hcountry}
@@ -930,14 +970,14 @@ generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSo
   
   daily=FALSE
   showhosp = 0
-  showest  = 0 
-  showtest = 0 
-  showrec = 0 
+  showest  = 0
+  showtest = 0
+  showrec = 0
   showvax=0
-  showvaxed = 0 
-  showfullyvaxed = 0 
-  showpositive = 0 
-  showdeath = 0 
+  showvaxed = 0
+  showfullyvaxed = 0
+  showpositive = 0
+  showdeath = 0
   
   if (grepl("Complete",focusplot)){plotlog=0}
   
@@ -948,7 +988,7 @@ generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSo
   if (focusplot == "Total Vaccinated")      {return(plot_total(data,estate,plotlog,0,0,showtest,showhosp,showest,showrec, showvax, 1,         showfullyvaxed ,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
   if (focusplot == "Total Fully Vaccinated"){return(plot_total(data,estate,plotlog,0,0,showtest,showhosp,showest,showrec, showvax, showvaxed, 1              ,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
   if (focusplot == "Total Hospitalizations"){return(plot_total(data,estate,plotlog,0,0,showtest,        1,showest,showrec,showvax , showvaxed,showfullyvaxed ,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
-  if (focusplot == "Total All")             {return(plot_total(data,estate,plotlog,1,1,       0,        0,      0,     0,       0 ,   1,          1,  lookahead,sSocialDist,eSocialDist,normalize,daily, overlay,1))} #removed test and hosp
+  if (focusplot == "Total All")             {return(plot_total(data,estate,plotlog,1,1,       0,        0,      0,     0,       1 ,   1,          1,  lookahead,sSocialDist,eSocialDist,normalize,daily, overlay,1))} #removed test and hosp
   
   
   if (focusplot == "%Complete Tests")           {return(plot_total(data,estate,plotlog,0,0,1      , showhosp,showest,showrec,showvax, showvaxed,showfullyvaxed,lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
@@ -966,7 +1006,7 @@ generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSo
   if (focusplot == "Daily Fully Vaccinated")  {return(plot_total(data,estate,plotlog,0,0,0,showhosp,showest, showrec, 0     , showvaxed,1, lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
   if (focusplot == "Daily Vaccinated")        {return(plot_total(data,estate,plotlog,0,0,0,showhosp,showest, showrec, 0     , 1,showfullyvaxed, lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
   if (focusplot == "Daily Hospitalizations")  {return(plot_total(data,estate,plotlog,0,0,0,1       ,showest, showrec,showvax, showvaxed,showfullyvaxed, lookahead,sSocialDist,eSocialDist,normalize,daily, overlay))}
-  if (focusplot == "Daily All")               {return(plot_total(data,estate,plotlog,1,1,0,1       ,0,        0,       1,        1, 1, lookahead,sSocialDist,eSocialDist,normalize,daily, overlay,1))} #test removed
+  if (focusplot == "Daily All")               {return(plot_total(data,estate,plotlog,1,1,0,1       ,0,        0,       0,        0, 0, lookahead,sSocialDist,eSocialDist,normalize,daily, overlay,1))} #test removed
   
   if (focusplot == "Flattening Tests")            {return(plot_growth(focusplot,"test"                  ,"fracTestIncrease",data,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}
   if (focusplot == "Flattening Cases")            {return(plot_growth(focusplot,"positive"              ,"fracPositiveIncrease",data,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}
@@ -992,7 +1032,7 @@ generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSo
   
   #if (focusplot == "CFR Evolution")                  {return(plot_xy(data,"positive" ,"cfr",focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}
   
-  if (focusplot == "Incremental Case Fatality Rate")     {return(plot_feature(data,"cfrIncremental",       focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}     
+  if (focusplot == "Incremental Case Fatality Rate")     {return(plot_feature(data,"cfrIncremental",       focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}    
   if (focusplot == "Incremental % Positive")             {return(plot_feature(data,"fracposIncremental",       focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}
   if (focusplot == "Incremental % Pop Tested")                 {return(plot_feature(data,"fracpoptestedIncremental", focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}#not needed?
   if (focusplot == "Incremental Deaths per Hospitalization")   {return(plot_feature(data,"dperhIncremental",         focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist,overlay))}
@@ -1000,7 +1040,7 @@ generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSo
   if (focusplot == "Incremental Vax per Case")               {return(plot_feature(data,"vpcIncremental",      focusplot,estate,plotlog,lookahead,sSocialDist,eSocialDist))}
   
   
-  #Top/Bottom Summaries 
+  #Top/Bottom Summaries
   if (focusplot == "Total Tests Summary")            { return(plot_now_summary(data,focusplot,plotlog,normalize,"test",     sSocialDist,eSocialDist,nStates) )}
   if (focusplot == "Total Cases Summary")            { return(plot_now_summary(data,focusplot,plotlog,normalize,"positive", sSocialDist,eSocialDist,nStates) )}
   if (focusplot == "Total Deaths Summary")           { return(plot_now_summary(data,focusplot,plotlog,normalize,"death",    sSocialDist,eSocialDist,nStates) )}
@@ -1056,7 +1096,7 @@ namePlot      <- function(input){
   if (input$mode=="Rankings") {aspect       = input$aspectRanking } else { aspect = input$aspect}
   if (input$mode=="Trends"){ if (input$scope=="World") { inputfeature=input$feature}        else {inputfeature=input$featureUSA} }
   else                      {if (input$scope=="World") { inputfeature=input$featureRanking} else {inputfeature=input$featureRankingUSA}}
-  pname = paste(aspect, inputfeature) 
+  pname = paste(aspect, inputfeature)
   pname = str_replace(pname,"Hot","Growth (/million)")
   pname = str_replace(pname,"Estimated","Est")
   
@@ -1093,10 +1133,10 @@ identify_plot <- function(input){
   return(focusplot)}
 
 #UI and Server for Shiny------------------------------------------
-server <- function(input, output, session){ 
+server <- function(input, output, session){
   #Shiny Server. Plot0 is main plot, Plots1-4 are for "all" reports, 5-6 where for comparisions
-
-rawdata <- reactive({
+  
+  rawdata <- reactive({
     focusplot=identify_plot(input)
     #takes menu input and chosen report (focusplot) and returns plot object to UI
     if (is.null(focusplot) | (focusplot=="NA")) {return(plot_unavailable())}
@@ -1110,19 +1150,19 @@ rawdata <- reactive({
       plotlog=0
       normalize=FALSE
     }
-    else 
+    else
     {
       if (grepl(paste(input$options,collapse="|"),"log"))   {plotlog  = 1} else {plotlog  = 0} #changed from 0 1 boolean in interface late in game
       normalize    = grepl(paste(input$options,collapse="|"),"normalize")
       
     }
     try({
-      if (input$scope == "All")     {data = allData } #Choose the data to use 
+      if (input$scope == "All")     {data = allData } #Choose the data to use
       if (input$scope == "USA")     {data = amerData}
       if (input$scope == "World")   {data = worldData}
       
-      if (!input$hotspots){if ((input$scope == "All")   ) {estate = input$region}     
-        if ((input$scope == "World") ) {estate = input$country}   
+      if (!input$hotspots){if ((input$scope == "All")   ) {estate = input$region}    
+        if ((input$scope == "World") ) {estate = input$country}  
         if ((input$scope == "USA")   ) {estate = input$state}}
       else  {if ((input$scope == "All")   ) {estate = input$hregion}
         if ((input$scope == "World") ) {estate = input$hcountry}
@@ -1151,112 +1191,125 @@ rawdata <- reactive({
     data = data[data$rdate >= input$startd,]
     data = as.data.table(data)
     return(data)})
-
-exportdata=reactive({
-  data=rawdata()
-  data=data[,c(
-  "rdate",
-  "mday",
-  "state",
-  "pop",
-  "positive",
-  "positiveIncrease",
-  "fracPositiveIncrease",
-  "death",
-  "deathIncrease",
-  "fracDeathIncrease",
-  "people_vaccinated",
-  "daily_vaccinations",
-  "VaxedIncrease",
-  "fracVaxIncrease",
-  "fracVaxedIncrease",
-  "people_fully_vaccinated",
-  "fullyVaxedIncrease",
-  "fracFullyVaxedIncrease",
-  "cfr",
-  "cfrIncremental",
-  "ifrRatio",
-  "ifrRatioIncremental",
-  "CaseGrowthRateDeclineRate",
-  "DeathGrowthRateDeclineRate",
-  "projectedCaseGrowth",
-  "projectedDeathGrowth")]
-})
-
-output$downloadData <- downloadHandler(
-  filename = function() {
-    paste("data-", Sys.Date(), ".csv", sep="")
-  },
-  content = function(file) {
-    write.csv(exportdata(), file)
-  }
-)
-
+  
+  exportdata=reactive({
+    data=rawdata()
+    data=data[,c(
+      "rdate",
+      "mday",
+      "state",
+      "pop",
+      "positive",
+      "positiveIncrease",
+      "fracPositiveIncrease",
+      "death",
+      "deathIncrease",
+      "fracDeathIncrease",
+      "people_vaccinated",
+      "daily_vaccinations",
+      "VaxedIncrease",
+      "fracVaxIncrease",
+      "fracVaxedIncrease",
+      "people_fully_vaccinated",
+      "fullyVaxedIncrease",
+      "fracFullyVaxedIncrease",
+      "cfr",
+      "cfrIncremental",
+      "ifrRatio",
+      "ifrRatioIncremental",
+      "CaseGrowthRateDeclineRate",
+      "DeathGrowthRateDeclineRate",
+      "projectedCaseGrowth",
+      "projectedDeathGrowth")]
+  })
+  
+  output$downloadData <- downloadHandler(
+    filename = function() {
+      paste("data-", Sys.Date(), ".csv", sep="")
+    },
+    content = function(file) {
+      write.csv(exportdata(), file)
+    }
+  )
+  
   output$Plot0 <- renderPlotly({
     p <- generate_plot(identify_plot(input),input,data,plotlog,lookahead,sSocialDist,eSocialDist,54)
     p <- config(ggplotly(p),  displaylogo = FALSE)
     return(p)
   }
-)
+  )
   
   output$plot.ui <- renderUI({  plotlyOutput("Plot0", height=plotHeight)})
   
- rfingUS= reactiveVal(FALSE)
- rfingWorld= reactiveVal(FALSE)
- 
+  rfingUS= reactiveVal(FALSE)
+  rfingWorld= reactiveVal(FALSE)
+  
   output$refreshTextUS= renderText(if (rfingUS()){"refreshing"}else{
-     paste("Refresh US (",
-            round(as.Date(Sys.Date())-max(as.Date(amerData$rdate),na.rm=TRUE)-1,0),
-            "d)"       )})
+    paste("Refresh US (",
+          round(as.Date(Sys.Date())-max(as.Date(amerData$rdate),na.rm=TRUE)-1,0),
+          "d)"       )})
   
   output$refreshTextWorld= renderText(if (rfingWorld()){"refreshing"}else{
     paste("Refresh World (",
-           round(as.Date(Sys.Date())-max(as.Date(worldData$rdate),na.rm=TRUE)-1,0),
+          round(as.Date(Sys.Date())-max(as.Date(worldData$rdate),na.rm=TRUE)-1,0),
           "d)"
     )})
-
-observeEvent(input$refreshUS,{
-  withProgress(message="refreshing", expr={
-    incProgress(0.1,"getting US data")  
-    print("refreshing")
-    rfingUS(TRUE)
-    print(Sys.time())
+  
+  observeEvent(input$refreshUS,{
+    withProgress(message="refreshing", expr={
+      echomsg(0.1,"getting US data") 
+      echomsg(0.05,"refreshing")
+      rfingUS(TRUE)
+      echomsg(0.05,Sys.time())
+      refresh=TRUE
+      forceRefresh=TRUE
+      amerData     <<- get_amer_data(refresh|forceRefresh)
+      echomsg(0.1,"aggregating")
+      USStateData         <<- region_aggregate( amerData[ grepl( paste(electoralAll,  collapse="|"), amerData$state), ],  "US States") #doesn't sum states without final entries. has hospitalization data
+      deepBlueStateData   <<- region_aggregate( amerData[ grepl( paste(deepBlueState, collapse="|"), amerData$state), ],  "Deep Blue State")
+      deepRedStateData    <<- region_aggregate( amerData[ grepl( paste(deepRedState,  collapse="|"), amerData$state), ],  "Deep _Red State")
+      world        = region_aggregate(worldData,"World")
+      echomsg(0.1,"saving") 
+      allData      <<- rbind(amerData,worldData,world,deepBlueStateData,deepRedStateData,USStateData)
+      save(amerData,worldData,allData,world,deepBlueStateData,deepRedStateData,USStateData, file = "cache/alldata.RData")
+      
+      put_object(
+        file = "cache/alldata.Rdu", 
+        object = "alldata.Rdu", 
+        bucket = "appjackpriororg")
+      
+      echomsg(0.05,"saved")
+      echomsg(0.05,Sys.time())
+      rfingUS(FALSE)
+    })},ignoreNULL=TRUE)
+  
+  observeEvent(input$refreshWorld,{
+    echomsg(0.05,"refreshing")
+    rfingWorld(TRUE)
+    echomsg(0.05,Sys.time())
     refresh=TRUE
     forceRefresh=TRUE
-    amerData     <<- get_amer_data(refresh|forceRefresh)
-    incProgress(0.1,"aggregating")
-    USStateData         <<- region_aggregate( amerData[ grepl( paste(electoralAll,  collapse="|"), amerData$state), ],  "US States") #doesn't sum states without final entries. has hospitalization data 
-    deepBlueStateData   <<- region_aggregate( amerData[ grepl( paste(deepBlueState, collapse="|"), amerData$state), ],  "Deep Blue State")
-    deepRedStateData    <<- region_aggregate( amerData[ grepl( paste(deepRedState,  collapse="|"), amerData$state), ],  "Deep _Red State")
-    incProgress(0.1,"saving")  
-    allData      <<- rbind(amerData,worldData,deepBlueStateData,deepRedStateData,USStateData) 
-    save(amerData,worldData,allData,world,deepBlueStateData,deepRedStateData,USStateData, file = "cache/alldata.RData")
-    print("saved")
-    print(Sys.time())
-    rfingUS(FALSE)
-    })},ignoreNULL=TRUE) 
-
-observeEvent(input$refreshWorld,{
-  print("refreshing")
-  rfingWorld(TRUE)
-  print(Sys.time())
-  refresh=TRUE
-  forceRefresh=TRUE
+    
+    withProgress(message="refreshing", expr={
+      echomsg(0.1,"getting world data") 
+      worldData    <<- get_world_data(refresh|forceRefresh)
+      worldData    <<- rbind(worldData,USStateData)
+      #echomsg(0.1,"aggregating")
+      #world        <<- region_aggregate(worldData,"World")
+      echomsg(0.1,"saving") 
+      #allData      <<- rbind(amerData,worldData,world,deepBlueStateData,deepRedStateData)
+      allData      <<- rbind(amerData,worldData,deepBlueStateData,deepRedStateData)
+      #save(amerData,worldData,allData,world,deepBlueStateData,deepRedStateData,USStateData, file = "cache/alldata.RData")
+      save(amerData,worldData,allData,deepBlueStateData,deepRedStateData,USStateData, file = "cache/alldata.RData")
+      put_object(
+        file = "cache/alldata.Rdu", 
+        object = "alldata.Rdu", 
+        bucket = "appjackpriororg")
+      echomsg(0.05,"saved")
+      echomsg(0.05,Sys.time())
+      rfingWorld(FALSE)})
+  },ignoreNULL=TRUE)
   
-  withProgress(message="refreshing", expr={
-  incProgress(0.1,"getting world data")  
-  worldData    <<- get_world_data(refresh|forceRefresh)
-  worldData    <<- rbind(worldData,USStateData)
-  incProgress(0.1,"aggregating")
-  world        <<- region_aggregate(worldData,"World")
-  incProgress(0.1,"saving")  
-  allData      <<- rbind(amerData,worldData,world,deepBlueStateData,deepRedStateData) 
-  save(amerData,worldData,allData,world,deepBlueStateData,deepRedStateData,USStateData, file = "cache/alldata.RData")
-  print("saved")
-  print(Sys.time())
-  rfingWorld(FALSE)})
-},ignoreNULL=TRUE) 
-
 }
 
 
@@ -1274,27 +1327,27 @@ ui     <- function(request){
   customFun = function() {return(c(c("IR BE FR GE MA"),
                                    c("Deep Red vs. Deep Blue"),
                                    c("Deep Red States"),
-                                   c("Deep Blue States"), 
+                                   c("Deep Blue States"),
                                    c("All States"),
                                    c("Europe"),
                                    c("Americas"),
                                    c("Africa"),
                                    c("Asia"),
-                                   c("Oceania"), 
+                                   c("Oceania"),
                                    c("All Countries")))}
   fluidPage(
     titlePanel("Covid-19 Data & Forecasts"),
     sidebarLayout(
       sidebarPanel(
-        bookmarkButton(label="Share",inline=TRUE), 
+        bookmarkButton(label="Share",inline=TRUE),
         tags$a(href="http://app.jackprior.org", "RESET"),
-        #tags$a(href="", "RESET"), #this doesn't reset bookmarked iphone 
+        #tags$a(href="", "RESET"), #this doesn't reset bookmarked iphone
         
         tags$a(href="https://covid19.jackprior.org/", target="_blank","HELP"),
         radioButtons("mode",  "What?", c("Trends","Rankings"), selected = c("Trends"), inline=TRUE),
         radioButtons("scope", "Where?",  c("World","USA", "All", "Custom"),                  selected = "USA",      inline=TRUE),
         
-        conditionalPanel(condition = "(input.scope =='All') &   (!input.hotspots)   & (input.mode == 'Trends')", selectInput("region",  'Select Countries/States', rcFun(), multiple=TRUE, selected = "World")),
+        conditionalPanel(condition = "(input.scope =='All') &   (!input.hotspots)   & (input.mode == 'Trends')", selectInput("region",  'Select Countries/States', rcFun(), multiple=TRUE, selected = refCountry )),
         conditionalPanel(condition = "(input.scope =='World')&  (!input.hotspots)   & (input.mode == 'Trends')", selectInput("country", 'Select Countries',        wcFun(), multiple=TRUE, selected = refCountry )),
         conditionalPanel(condition = "(input.scope =='USA')   & (!input.hotspots)   & (input.mode == 'Trends')", selectInput("state",   'Select States',           scFun(), multiple=TRUE, selected = "MA" )),
         
@@ -1307,9 +1360,9 @@ ui     <- function(request){
         conditionalPanel( condition = "input.mode  == 'Trends' & input.scope == 'World'",   radioButtons("feature",           "What Aspect?", c("Cases", "Deaths","Vaccinated","Fully Vaccinated",   "All"),                            selected = "Cases",inline=TRUE)),
         #conditionalPanel( condition = "input.mode  == 'Trends' & input.scope !=='World'",   radioButtons("featureUSA",        "What Aspect?", c("Cases", "Deaths","Vaccinated","Fully Vaccinated",  "Tests","Hospitalizations",  "All"), selected = "Cases",inline=TRUE)),
         conditionalPanel( condition = "input.mode  == 'Trends' & input.scope !=='World'",   radioButtons("featureUSA",        "What Aspect?", c("Cases", "Deaths","Vaccinated","Fully Vaccinated",    "All"), selected = "Cases",inline=TRUE)),
-        conditionalPanel( condition = "input.mode !== 'Trends' & input.scope == 'World'",   radioButtons("featureRanking",    "What Aspect?", c("Cases", "Deaths","Vaccinated",  "Fully Vaccinated"                                  ), selected = "Cases",inline=TRUE)), 
+        conditionalPanel( condition = "input.mode !== 'Trends' & input.scope == 'World'",   radioButtons("featureRanking",    "What Aspect?", c("Cases", "Deaths","Vaccinated",  "Fully Vaccinated"                                  ), selected = "Cases",inline=TRUE)),
         #conditionalPanel( condition = "input.mode !== 'Trends' & input.scope  !== 'World'", radioButtons("featureRankingUSA", "What Aspect?", c("Cases", "Deaths","Vaccinated",  "Fully Vaccinated", "Tests","Hospitalizations"       ),  selected = "Cases",inline=TRUE)),
-        conditionalPanel( condition = "input.mode !== 'Trends' & input.scope  !== 'World'", radioButtons("featureRankingUSA", "What Aspect?", c("Cases", "Deaths","Vaccinated", "Fully Vaccinated"       ),  selected = "Cases",inline=TRUE)),        
+        conditionalPanel( condition = "input.mode !== 'Trends' & input.scope  !== 'World'", radioButtons("featureRankingUSA", "What Aspect?", c("Cases", "Deaths","Vaccinated", "Fully Vaccinated"       ),  selected = "Cases",inline=TRUE)),       
         
         conditionalPanel(condition = "input.mode  == 'Trends'",                             radioButtons("aspect",         "What Dimension?", c("Total","Daily","Flattening", "CFR etc","Incremental"),  selected = "Daily",inline=TRUE) ),
         conditionalPanel(condition = "input.mode !== 'Trends' ",                            radioButtons("aspectRanking",  "What Dimension?", c("Total","Daily","Flattening", "Hot", "%Complete", "CFR etc","Incremental"), selected = "Daily",inline=TRUE)),
@@ -1324,9 +1377,9 @@ ui     <- function(request){
         actionButton("refreshWorld",textOutput("refreshTextWorld"))
         
       ),
-      mainPanel(  uiOutput("plot.ui"), 
+      mainPanel(  uiOutput("plot.ui"),
                   downloadButton("downloadData", "Download")
-                  )
+      )
     ))}
 
 #Launch Program----------------------------------
@@ -1341,11 +1394,18 @@ try({load("cache/alldata.RData" )
 if (refresh|forceRefresh) {
   amerData     = get_amer_data(refresh|forceRefresh)
   worldData    = get_world_data(refresh|forceRefresh)
-  USStateData           = region_aggregate( amerData[ grepl( paste(electoralAll,  collapse="|"), amerData$state), ],  "US States") #doesn't sum states without final entries. has hospitalization data 
+  USStateData           = region_aggregate( amerData[ grepl( paste(electoralAll,  collapse="|"), amerData$state), ],  "US States") #doesn't sum states without final entries. has hospitalization data
   deepBlueStateData     = region_aggregate( amerData[ grepl( paste(deepBlueState, collapse="|"), amerData$state), ],  "Deep Blue State")
   deepRedStateData      = region_aggregate( amerData[ grepl( paste(deepRedState,  collapse="|"), amerData$state), ],  "Deep _Red State")
   worldData    = rbind(worldData,USStateData)
   world        = region_aggregate(worldData,"World")
-  allData      = rbind(amerData,worldData,world,deepBlueStateData,deepRedStateData) 
-  save(amerData,worldData,allData, file = "cache/alldata.RData")}
+  allData      = rbind(amerData,worldData,world,deepBlueStateData,deepRedStateData)
+  #allData      = rbind(amerData,worldData,deepBlueStateData,deepRedStateData)
+  save(amerData,worldData,allData, file = "cache/alldata.RData")
+
+put_object(
+  file = "cache/alldata.RData", 
+  object = "alldata.RData", 
+  bucket = "appjackpriororg"
+)}
 shinyApp(ui = ui, server = server,  enableBookmarking = "url")
