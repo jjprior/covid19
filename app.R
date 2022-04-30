@@ -46,7 +46,7 @@ electoralAll  = c(electoralRed,electoralBlue)
 source("awskey.R",local=TRUE)
 
 
-save_object(object = "s3://appjackpriororg/alldata.RData", file = "cache/alldata.RData")
+#save_object(object = "s3://appjackpriororg/alldata.RData", file = "cache/alldata.RData")
 
 
 echomsg <- function(inc,txt=NULL) {
