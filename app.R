@@ -46,9 +46,6 @@ electoralAll  = c(electoralRed,electoralBlue)
 source("awskey.R",local=TRUE)
 
 
-#save_object(object = "s3://appjackpriororg/alldata.RData", file = "cache/alldata.RData")
-
-
 echomsg <- function(inc,txt=NULL) {
   try(incProgress(inc,txt))
   cat(file = stderr(), paste0(paste(Sys.time(), txt, "\n")))
@@ -57,7 +54,7 @@ echomsg <- function(inc,txt=NULL) {
 
 #GET DATA FROM WEB Or DISK--------------------------------------------------------
 get_world_data = function(refreshData=TRUE){ 
-  #Load world data from web, backup load from disk
+    #Load world data from web, backup load from disk
   if (refreshData){
     try({
       worldcols = cols(
@@ -69,11 +66,11 @@ get_world_data = function(refreshData=TRUE){
         tests_units = col_character()   )
       
       worlddata = read_csv("https://covid.ourworldindata.org/data/owid-covid-data.csv",col_types = worldcols)
-      saveRDS(worlddata,"cache/worlddata.Rdu")
-      put_object(
-        file = "cache/worlddata.Rdu", 
-        object = "worlddata.Rdu", 
-        bucket = "appjackpriororg")
+      #saveRDS(worlddata,"worlddata.Rdu")
+      #put_object(
+      #  file = "worlddata.Rdu", 
+      #  object = "worlddata.Rdu", 
+      #  bucket = "appjackpriororg")
       
       vaxcols= cols(
         location = col_character(),
@@ -89,15 +86,15 @@ get_world_data = function(refreshData=TRUE){
         people_fully_vaccinated_per_hundred = col_double(),
         daily_vaccinations_per_million = col_double()  )
       rvac = read_csv("https://raw.githubusercontent.com/owid/covid-19-data/master/public/data/vaccinations/vaccinations.csv",col_types=vaxcols)
-      saveRDS(rvac,"cache/rvacworld.Rdu")
-      put_object(
-        file = "cache/rvacworld.Rdu", 
-        object = "rvacworld.Rdu", 
-        bucket = "appjackpriororg")
+      #saveRDS(rvac,"rvacworld.Rdu")
+      #put_object(
+      #  file = "rvacworld.Rdu", 
+      #  object = "rvacworld.Rdu", 
+      #  bucket = "appjackpriororg")
       
       })  } #end of If try
   
-  rvac      = readRDS(file="cache/rvacworld.Rdu")
+  #rvac      = readRDS(file="rvacworld.Rdu")
   cn = colnames(rvac)
   cn[3] = "rdate"
   cn[1] = "state"
@@ -107,7 +104,8 @@ get_world_data = function(refreshData=TRUE){
   
   ##Load World Data Cache
   echomsg(0.05,"loading world data cache")
-  x    = readRDS(file="cache/worlddata.Rdu")
+  #x    = readRDS(file="worlddata.Rdu")
+  x=worlddata
   x     = x %>% select(date,location, total_cases, total_deaths)
   x$date = parse_date_time(x$date,"ymd")
   colnames(x)= c("rdate","state","positive","death")
@@ -156,11 +154,12 @@ get_amer_data     <- function(refreshData=TRUE){
       deaths = col_double()
     )
     data = read_csv("https://raw.githubusercontent.com/nytimes/covid-19-data/master/us-states.csv", col_types =  ct)
-    saveRDS(data,file="cache/AmerDataCache.Rdu")
-    put_object(
-      file = "cache/AmerDataCache.Rdu", 
-      object = "AmerDataCache.Rdu", 
-      bucket = "appjackpriororg")})}
+    #saveRDS(data,file="AmerDataCache.Rdu")
+    #put_object(
+    #  file = "AmerDataCache.Rdu", 
+    #  object = "AmerDataCache.Rdu", 
+    #  bucket = "appjackpriororg")
+    })}
 
   
   if (refreshData){try({
@@ -181,13 +180,14 @@ get_amer_data     <- function(refreshData=TRUE){
       daily_vaccinations_per_million = col_double(),
       share_doses_used = col_double())
     rvac = read_csv("https://raw.githubusercontent.com/owid/covid-19-data/master/public/data/vaccinations/us_state_vaccinations.csv",col_types=col_types)
-    saveRDS(rvac,file="cache/rvacUS.Rdu") 
-    put_object(
-      file = "cache/rvacUS.Rdu", 
-      object = "rvacUS.Rdu", 
-      bucket = "appjackpriororg")})}
+    #saveRDS(rvac,file="rvacUS.Rdu") 
+    #put_object(
+    #  file = "rvacUS.Rdu", 
+    #  object = "rvacUS.Rdu", 
+    #  bucket = "appjackpriororg")
+    })}
   
-  rvac=readRDS(file="cache/rvacUS.Rdu")
+  #rvac=readRDS(file="rvacUS.Rdu")
   cn = colnames(rvac)
   cn[1] = "rdate"
   cn[2] = "state"
@@ -197,7 +197,7 @@ get_amer_data     <- function(refreshData=TRUE){
   
   rvac = select(rvac,rdate, state,total_vaccinations,people_vaccinated, people_fully_vaccinated,daily_vaccinations)
   echomsg(0.05,"reading us data cache")
-  data              = readRDS(file="cache/AmerDataCache.Rdu")
+  #data              = readRDS(file="AmerDataCache.Rdu")
   colnames(data) = c("date", "state","fips","positive", "death")
   
   data$state = state.abb[match(data$state,state.name)]
@@ -560,9 +560,6 @@ get_hot_spots_by = function(nowdata,sfeature,n){
   hotspots = head(nowdata$state,n)
   return(unique(hotspots))}
 
-main_caption  <- function(s1,s2){paste(format(Sys.Date(), format = "%d%B") , " app.jackprior.org  - Social Dist. Basis: ",format(s1, format = "%d%b"),"-",format(s2, format = "%d%b"),sep = "")}
-
-main_title    <- function(s,gr=""){ggtitle(paste(  str_replace( str_replace_all(s,"_"," "),"Summary",""), gr))}
 
 p_add_vline      <- function(vdate){
   p = geom_vline(aes(xintercept =   as.numeric(as.POSIXct(vdate))))
@@ -617,13 +614,15 @@ mid_point   <- function(x, ht=0.5){ # place scaled amongst data for annotation.
   y = min(x)+ ht* (max(x)-min(x))
   return(y)}
 
+main_caption  <- function(s1,s2) {paste0(format(Sys.Date(), format = "%d%B") , " - fit:",format(s1, format = "%d%b"),"-",format(s2, format = "%d%b")," (app.jackprior.org)")}
+main_title    <- function(s,gr=""){paste(str_replace( str_replace_all(s,"_"," "),"Summary",""), gr)}
+
 format_plot <- function(p, estate, ytitle, plotlog,sSocialDist,eSocialDist,pct=0){
   # format plots generally
   p = p + theme(axis.title.x=element_blank())
   p = p + theme(legend.title=element_blank())
   p = p + theme(plot.caption = element_text(hjust = 0))
-  p = p + labs(caption=main_caption(sSocialDist,eSocialDist))
-  p = p + main_title(estate)
+  p = p + labs(title=paste(main_title(estate),main_caption(sSocialDist,eSocialDist)))
   try({p=p_log_scale(p,plotlog,pct) })
   return(p)}
 
@@ -1265,11 +1264,11 @@ server <- function(input, output, session){
       world        = region_aggregate(worldData,"World")
       echomsg(0.1,"saving") 
       allData      <<- rbind(amerData,worldData,world,deepBlueStateData,deepRedStateData,USStateData)
-      save(amerData,worldData,allData,world,deepBlueStateData,deepRedStateData,USStateData, file = "cache/alldata.RData")
+      save(amerData,worldData,allData,world,deepBlueStateData,deepRedStateData,USStateData, file = "alldata.RData")
       
       put_object(
-        file = "cache/alldata.Rdu", 
-        object = "alldata.Rdu", 
+        file = "alldata.RData", 
+        object = "alldata.RData", 
         bucket = "appjackpriororg")
       
       echomsg(0.05,"saved")
@@ -1286,6 +1285,7 @@ server <- function(input, output, session){
     
     withProgress(message="refreshing", expr={
       echomsg(0.1,"getting world data") 
+      gc()
       worldData    <<- get_world_data(refresh|forceRefresh)
       worldData    <<- rbind(worldData,USStateData)
       #echomsg(0.1,"aggregating")
@@ -1293,13 +1293,15 @@ server <- function(input, output, session){
       echomsg(0.1,"saving") 
       #allData      <<- rbind(amerData,worldData,world,deepBlueStateData,deepRedStateData)
       allData      <<- rbind(amerData,worldData,deepBlueStateData,deepRedStateData)
-      #save(amerData,worldData,allData,world,deepBlueStateData,deepRedStateData,USStateData, file = "cache/alldata.RData")
-      save(amerData,worldData,allData,deepBlueStateData,deepRedStateData,USStateData, file = "cache/alldata.RData")
+      gc()
+      #save(amerData,worldData,allData,world,deepBlueStateData,deepRedStateData,USStateData, file = "alldata.RData")
+      save(amerData,worldData,allData,deepBlueStateData,deepRedStateData,USStateData, file = "alldata.RData")
+      echomsg(0.1,"saved to cache")
       put_object(
-        file = "cache/alldata.Rdu", 
-        object = "alldata.Rdu", 
+        file = "alldata.RData", 
+        object = "alldata.RData", 
         bucket = "appjackpriororg")
-      echomsg(0.05,"saved")
+      echomsg(0.05,"saved to aws")
       echomsg(0.05,Sys.time())
       rfingWorld(FALSE)})
   },ignoreNULL=TRUE)
@@ -1365,8 +1367,8 @@ ui     <- function(request){
         checkboxGroupInput('options',"Options",choices=c("LogY"="log","/mil"="normalize"),selected=c("log","normalize"), inline=TRUE),
         sliderInput("startd", "Start Plots at?",                  min = ymd("20200101"), max = Sys.Date()-30, value = ymd("20211115"), round=TRUE),
         sliderInput("look", "Forecast Horizon?",         min = Sys.Date()+7, max = Sys.Date()+maxforecastdays,    value = floor_date(Sys.Date()+defaultforecastdays,"month"),round=TRUE, dragRange=FALSE),
-        sliderInput("sdw",  "What Data for Model",       min = ymd("20200301"), max = Sys.Date()            , value = c(as.Date(as.Date(Sys.Date()-distwindow)),as.Date(Sys.Date()))-2,round=TRUE, dragRange=FALSE),
-        
+        #sliderInput("sdw",  "What Data for Model",       min = ymd("20200301"), max = Sys.Date()            , value = c(as.Date(as.Date(Sys.Date()-distwindow)),as.Date(Sys.Date()))-2,round=TRUE, dragRange=FALSE),
+        sliderInput("sdw",  "What Data for Model",       min = today()-60, max = Sys.Date()            , value = c(as.Date(as.Date(Sys.Date()-distwindow)),as.Date(Sys.Date()))-1,round=TRUE, dragRange=FALSE),
         actionButton("refreshUS",textOutput("refreshTextUS")),
         actionButton("refreshWorld",textOutput("refreshTextWorld"))
         
@@ -1380,7 +1382,10 @@ ui     <- function(request){
 stime1 = as.POSIXct(Sys.time())
 refresh=TRUE
 Sys.setenv(TZ='America/New_York')
-try({load("cache/alldata.RData" )
+
+try(save_object(object = "s3://appjackpriororg/alldata.RData", file = "alldata.RData"))
+
+try({load("alldata.RData" )
   refresh = FALSE
   if (max(amerData$rdate)<(Sys.Date()-maxAge)) {refresh=TRUE}
 })
@@ -1394,12 +1399,14 @@ if (refresh|forceRefresh) {
   worldData    = rbind(worldData,USStateData)
   world        = region_aggregate(worldData,"World")
   allData      = rbind(amerData,worldData,world,deepBlueStateData,deepRedStateData)
-  #allData      = rbind(amerData,worldData,deepBlueStateData,deepRedStateData)
-  save(amerData,worldData,allData, file = "cache/alldata.RData")
+  save(amerData,worldData,allData, file = "alldata.RData")
 
 put_object(
-  file = "cache/alldata.RData", 
+  file = "alldata.RData", 
   object = "alldata.RData", 
   bucket = "appjackpriororg"
 )}
+
+
+
 shinyApp(ui = ui, server = server,  enableBookmarking = "url")
