@@ -4,22 +4,22 @@ rm(list=ls())
 # Licence: https://www.gnu.org/licenses/gpl-3.0.en.html
 # reduce messages on shiny server at startup-------
 shhh <- suppressPackageStartupMessages
-shhh(library(curl))
-shhh(library(jsonlite))
+#shhh(library(curl))      # only needed if re-fetching from archived sources
+#shhh(library(jsonlite))  # only needed if re-fetching from archived sources
 shhh(library(lubridate))
 shhh(library(stringr))
 shhh(library(shiny))
 shhh(library(scales))
 shhh(library(tidyverse))
-shhh(library(reshape2))
+#shhh(library(reshape2))  # unused
 #shhh(library(plotly))
 library(data.table)
 # set some global values for program-----------
 # endDate is a starting ceiling; overridden after data load (see startup section)
-endDate = ymd("2023-06-01")
+endDate = ymd("2022-06-30")
 options(warn = 1, scipen = 999)#no scientific notation in plots
 lookback            = 50  #how far back model show plot model on top of data
-distwindow          = 15 #how far back for default social distancing window
+distwindow          = 60 #how far back for default model fitting window (60 days = ~May 1)
 maxforecastdays     = 120 #maximum forward forecasting
 defaultforecastdays = 50  #default forward forecasting
 projectDays         = 7  #Days to project out for ranking case growth rate
@@ -267,7 +267,6 @@ region_aggregate <- function(data,state="World"){ #sum up countries to world or 
   Regiontotal_vaccinations   = aggregate(total_vaccinations~rdate, data=data, FUN =  sum, na.rm= TRUE, na.action = NULL)
   Regionpeople_vaccinated   = aggregate(people_vaccinated~rdate, data=data, FUN =  sum, na.rm= TRUE, na.action = NULL)
   Regionpeople_fully_vaccinated   = aggregate(people_fully_vaccinated~rdate, data=data, FUN =  sum, na.rm= TRUE, na.action = NULL)
-  Regionpeople_vaccinated   = aggregate(people_vaccinated~rdate, data=data, FUN =  sum, na.rm= TRUE, na.action = NULL)
   Regiondaily_vaccinations   = aggregate(daily_vaccinations~rdate, data=data, FUN =  sum, na.rm= TRUE, na.action = NULL)
   RegionFullyVaxedIncrease  = aggregate(fullyVaxedIncrease~rdate, data=data, FUN =  sum, na.rm= TRUE, na.action = NULL)
   RegionVaxedIncrease  = aggregate(VaxedIncrease~rdate, data=data, FUN =  sum, na.rm= TRUE, na.action = NULL)
@@ -625,9 +624,10 @@ format_date_plot <- function(p, estate, ytitle, plotlog,sSocialDist,eSocialDist,
   # format plots vs. date
   if (plotlog==0){p=p+ylim(0,NA)}
   p = format_plot(p, estate, ytitle, plotlog,sSocialDist,eSocialDist,pct)
-  p = p + scale_x_datetime(date_labels = "%d%b", date_breaks = "1 month")
+  p = p + scale_x_datetime(date_labels = "%b'%y", date_breaks = "1 month")
   p = p + ylab(ytitle)
-  p = p + theme(axis.title.x = element_text(size = 0))
+  p = p + theme(axis.title.x = element_text(size = 0),
+                axis.text.x  = element_text(angle = 90, hjust = 1, vjust = 0.5))
   try({p = p + p_add_vline(as.Date(sSocialDist))+p_add_vline(as.Date(eSocialDist))})
   return(p)}
 
@@ -665,7 +665,7 @@ plot_xy        <- function(sdata,xfeature,yfeature, ftitle,cstate,plotlog,lookah
   #Plot a feature generically
   sdata$y = sdata[[yfeature]]
   sdata$x = sdata[[xfeature]]
-  sdata   = sdata[!is.na(sdata$y)&!is.na(sdata$y),]
+  sdata   = sdata[!is.na(sdata$x)&!is.na(sdata$y),]
   overlay = length(cstate)>1
   if (overlay) {sdata$flegend=sdata$state} else {sdata$flegend = yfeature}
   sdata   = subset(sdata, grepl(paste(cstate,collapse="|"),state) & !is.na(y) & !is.na(x))
@@ -756,8 +756,12 @@ plot_trend  <- function(p,pdata,estate,plotlog,totFeature,increaseFeature,fracFe
     #constrain forecasts to not exceed population to avoid blowing up graphs
     if (normalize){forecast$tot[forecast$tot>1e6]=NA
     forecast$increase[forecast$increase>1e6]=NA}
-    else          {forecast$tot[forecast$tot>forecast$pop]=NA
-    forecast$increase[forecast$increase>forecast$pop]=NA}}
+    else          {for (s in unique(forecast$state)) {
+      pop_s = max(pdata$pop[pdata$state == s], na.rm = TRUE)
+      idx   = forecast$state == s
+      forecast$tot[idx & forecast$tot > pop_s]           = NA
+      forecast$increase[idx & forecast$increase > pop_s] = NA
+    }}}
   
   madata = pdata[!is.na(pdata$movingAvg),]
   
@@ -1162,6 +1166,7 @@ server <- function(input, output, session){
         else if (estate == "Deep Red vs. Deep Blue") {estate=c("Deep _Red State","Deep Blue State")}
         else if (estate == "Deep Blue States")  {estate= deepBlueState}
         else if (estate == "Deep Red States")   {estate =deepRedState}
+        else if (estate == "All States")        {estate = electoralAll}
         else if (estate == "Europe")       {estate= unique(allData$state[allData$continentExp=="Europe" ])}
         else if (estate == "Americas")     {estate= unique(allData$state[allData$continentExp=="Americas"])}
         else if (estate == "Oceania")      {estate= unique(allData$state[allData$continentExp=="Oceania"])}
@@ -1240,7 +1245,6 @@ ui     <- function(request){
   #User interface
   scFun =  function(){unique(amerData$state)}
   wcFun =  function(){unique(worldData$state)}
-  ccFun =  function(){unique(customData$state)}
   rcFun =  function(){unique(allData$state)}
   
   customFun = function() {return(c(c("IR BE FR GE MA"),
@@ -1264,7 +1268,7 @@ ui     <- function(request){
         
         tags$a(href="https://covid19.jackprior.org/", target="_blank","HELP"),
         radioButtons("mode",  "What?", c("Trends","Rankings"), selected = c("Trends"), inline=TRUE),
-        radioButtons("scope", "Where?",  c("World","USA", "All", "Custom"),                  selected = "USA",      inline=TRUE),
+        radioButtons("scope", "Where?",  c("World","USA", "All", "Custom"),                  selected = "World",    inline=TRUE),
         
         conditionalPanel(condition = "(input.scope =='All') &   (!input.hotspots)   & (input.mode == 'Trends')", selectInput("region",  'Select Countries/States', rcFun(), multiple=TRUE, selected = refCountry )),
         conditionalPanel(condition = "(input.scope =='World')&  (!input.hotspots)   & (input.mode == 'Trends')", selectInput("country", 'Select Countries',        wcFun(), multiple=TRUE, selected = refCountry )),
@@ -1288,10 +1292,10 @@ ui     <- function(request){
         
         #checkboxGroupInput('options',"Options",choices=c("LogY"="log","/mil"="normalize","15Mar-"="march1"),selected=c("log","normalize","march1"), inline=TRUE),
         checkboxGroupInput('options',"Options",choices=c("LogY"="log","/mil"="normalize"),selected=c("log","normalize"), inline=TRUE),
-        sliderInput("endd",   "End Data at?",        min = ymd("20200101"), max = endDate,                   value = endDate,                                    round = TRUE),
-        sliderInput("startd", "Start Plots at?",     min = ymd("20200101"), max = endDate - 30,              value = ymd("20200101"),                             round = TRUE),
-        sliderInput("look",   "Forecast Horizon?",   min = ymd("20200101"), max = endDate + maxforecastdays, value = endDate + defaultforecastdays,               round = TRUE, dragRange = FALSE),
-        sliderInput("sdw",    "What Data for Model", min = ymd("20200101"), max = endDate,                   value = c(as.Date(endDate - distwindow), as.Date(endDate)) - 2, round = TRUE, dragRange = FALSE)
+        sliderInput("endd",   "End Data at?",        min = startDate, max = endDate,                   value = endDate,                                    round = TRUE),
+        sliderInput("startd", "Start Plots at?",     min = startDate, max = endDate - 30,              value = startDate,                                   round = TRUE),
+        sliderInput("look",   "Forecast Horizon?",   min = startDate, max = endDate + maxforecastdays, value = endDate + defaultforecastdays,               round = TRUE, dragRange = FALSE),
+        sliderInput("sdw",    "What Data for Model", min = startDate, max = endDate,                   value = c(as.Date(endDate - distwindow), as.Date(endDate)) - 2, round = TRUE, dragRange = FALSE)
 
       ),
       mainPanel(  uiOutput("plot.ui"),
@@ -1306,9 +1310,19 @@ Sys.setenv(TZ='America/New_York')
 # Data is bundled in the repo as alldata.RData — no network or AWS needed.
 load("alldata.RData")
 
-# Derive endDate from actual data, then recompute mday across all frames so growth
-# models have a consistent reference point anchored to the last data date.
-endDate = max(allData$rdate, na.rm = TRUE)
+# Hard cap at June 2022 — daily data was well-behaved through this date.
+# Trim pre-Feb 2020 — sparse/noisy data before pandemic was underway.
+startDate = as.Date("2020-02-01")
+endDate   = as.Date("2022-06-30")
+trim_data = function(x) x[as.Date(x$rdate) >= startDate & as.Date(x$rdate) <= endDate, ]
+amerData  = trim_data(amerData)
+worldData = trim_data(worldData)
+allData   = trim_data(allData)
+if (exists("USStateData"))       USStateData       = trim_data(USStateData)
+if (exists("deepBlueStateData")) deepBlueStateData = trim_data(deepBlueStateData)
+if (exists("deepRedStateData"))  deepRedStateData  = trim_data(deepRedStateData)
+
+# Recompute mday so all growth models reference endDate consistently.
 fix_mday = function(x) { x$mday = as.numeric(difftime(x$rdate, endDate, units = "days")); x }
 amerData  = fix_mday(amerData)
 worldData = fix_mday(worldData)
