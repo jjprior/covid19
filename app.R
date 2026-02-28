@@ -12,14 +12,12 @@ shhh(library(shiny))
 shhh(library(scales))
 shhh(library(tidyverse))
 shhh(library(reshape2))
-shhh(library(plotly))
-shhh(library(aws.s3))
+#shhh(library(plotly))
 library(data.table)
 # set some global values for program-----------
-maxAge = 999
+# endDate is a starting ceiling; overridden after data load (see startup section)
+endDate = ymd("2023-06-01")
 options(warn = 1, scipen = 999)#no scientific notation in plots
-forceRefresh       = FALSE #Uncomment to force reload of data from web
-#forceRefresh       = TRUE #Uncomment to force reload of data from web -- remember need refresh if  CODE changed!!!
 lookback            = 50  #how far back model show plot model on top of data
 distwindow          = 15 #how far back for default social distancing window
 maxforecastdays     = 120 #maximum forward forecasting
@@ -41,9 +39,6 @@ deepRedState  = c("AL", "AK","AR", "ID","KS", "KY", "LA","MS","MT","NE","ND","OK
 electoralBlue = c("CA", "NY", "IL", "NJ", "VA", "MA", "MD", "MN", "CO","WA", "CT", "OR", "NV", "NM", "NH", "RI", "DE", "HI", "VT", "ME")
 electoralRed  = c("AK", "MT", "ND", "SD", "WY", "ID", "NE", "WV", "AR","IA", "KS", "MS", "UT", "OK", "KY", "LA", "AL", "SC", "MO", "WI", "AZ", "IN", "TN","NC", "GA", "MI", "OH", "PA", "FL", "TX")
 electoralAll  = c(electoralRed,electoralBlue)
-
-
-source("awskey.R",local=TRUE)
 
 
 echomsg <- function(inc,txt=NULL) {
@@ -261,7 +256,7 @@ get_sewer_data  <- function(){
 
 region_aggregate <- function(data,state="World"){ #sum up countries to world or states to USA
   #this doesn't deal with incomplete data for a country in final days and give smaller counts than full at end.
-  data = data[data$rdate < Sys.Date() , ] #avoid partial data for "today"
+  data = data[data$rdate < endDate , ] #avoid partial data for "today"
   Regionpositive               = aggregate(positive~rdate,             data = data, FUN =  sum, na.rm =TRUE, na.action = NULL)
   RegionpositiveIncrease       = aggregate(positiveIncrease~rdate,     data = data, FUN =  sum, na.rm =TRUE, na.action = NULL)
   RegiondeathIncrease          = aggregate(deathIncrease~rdate,        data = data, FUN =  sum, na.rm =TRUE, na.action = NULL)
@@ -319,13 +314,13 @@ get_state_pop <- function(estate,spops){
 #ADD FEATURES to DATA -------------------------------------------------------------
 project_growth_rate <- function(x,s,totfeature,fracfeature){
   #project case, death, etc growth rate "projectDays" into the future -- measures severity of flattening issues for ranking
-  fit =  get_growth(x,s,fracfeature, Sys.Date()-distwindow,Sys.Date())
+  fit =  get_growth(x,s,fracfeature,endDate-distwindow,endDate)
   ##if ( !is.na(fit[2]) ) {if (fit[2]>0) {fit[2]=0}}#don't ramp if positive assume current stays
   return(fit[1]*exp(fit[2]*projectDays))}
 
 growth_rate_decline_rate <- function(x,s,totfeature,fracfeature){
   #project case, death, etc growth rate "projectDays" into the future -- measures severity of flattening issues for ranking
-  fit =  get_growth(x,s,fracfeature, Sys.Date()-distwindow,Sys.Date())
+  fit =  get_growth(x,s,fracfeature, endDate-distwindow,endDate)
   return(fit[2])}
 
 project_total_growth_rate <- function(x,s,totfeature,fracfeature,t){
@@ -339,7 +334,7 @@ project_total_growth_rate <- function(x,s,totfeature,fracfeature,t){
   #  Rather than integrate the 1st term just approximate with average for now -- this is for ranking risk
   #  total growth at time t = u(t)*x(t) = (x(o) * exp(uavg * t)) * (u(o) * exp(k * t))
   #
-  fit =  get_growth(x,s,fracfeature, Sys.Date()-distwindow,Sys.Date())
+  fit =  get_growth(x,s,fracfeature, endDate-distwindow,endDate)
   uo = fit[1]
   k  = fit[2]
   if (is.na(k | length(k)==0)){return(NA)}
@@ -379,7 +374,7 @@ covid_calc <- function(x){
   x$fracDeathIncrease        = NA
   x$fracPositiveIncreaseEst  = NA
   x$fracTestIncrease         = NA
-  x$mday                     = as.numeric(difftime(x$rdate,Sys.Date(),units=c("days"))) #need to regress against days relative to today.
+  x$mday                     = as.numeric(difftime(x$rdate,endDate,units=c("days"))) #need to regress against days relative to today.
   x =  x[with(x,order(rdate)),] 
   for (s in unique(x$state)){#calculated day over day growth frac (rates) in cases, etc.
     index= (x$state==s)
@@ -404,7 +399,7 @@ covid_calc <- function(x){
     x$projectedEstCaseGrowth[index] = project_total_growth_rate(x,s,   "positiveEst", "fracPositiveIncreaseEst",projectDays)     * 1e6/x$pop[index] }
   
   
-  x = get_pct_complete(x, 90, Sys.Date()-distwindow, Sys.Date())
+  x = get_pct_complete(x, 90, endDate-distwindow, endDate)
   x = x[,order(colnames(x))]
   return(x)}
 
@@ -542,7 +537,7 @@ get_hot_spots = function (nowdata,numHotspots=4){
 }
 get_hot_spots_by = function(nowdata,sfeature,n){
   nowdata$feature = nowdata[[sfeature]]                       #make the summarized feature accessible.  
-  nowdata         = nowdata[!is.na(nowdata$feature) & (nowdata$rdate > ( Sys.Date() - hotrange ) ) & ( nowdata$rdate < Sys.Date() ), ] # limiit to last week non NA
+  nowdata         = nowdata[!is.na(nowdata$feature) & (nowdata$rdate > ( endDate - hotrange ) ) & ( nowdata$rdate < endDate ), ] # limiit to last week non NA
   nowdata         = nowdata[( (nowdata$positive>caseRankThreshold) & (nowdata$death>deathRankThreshold)),]    #limit to major regions
   nowdata$feature = nowdata$feature
   nowdata         = nowdata[!is.na(nowdata$feature),]
@@ -614,7 +609,7 @@ mid_point   <- function(x, ht=0.5){ # place scaled amongst data for annotation.
   y = min(x)+ ht* (max(x)-min(x))
   return(y)}
 
-main_caption  <- function(s1,s2) {paste0(format(Sys.Date(), format = "%d%B") , " - fit:",format(s1, format = "%d%b"),"-",format(s2, format = "%d%b")," (app.jackprior.org)")}
+main_caption  <- function(s1,s2) {paste0(format(endDate, format = "%d%B") , " - fit:",format(s1, format = "%d%b"),"-",format(s2, format = "%d%b")," (app.jackprior.org)")}
 main_title    <- function(s,gr=""){paste(str_replace( str_replace_all(s,"_"," "),"Summary",""), gr)}
 
 format_plot <- function(p, estate, ytitle, plotlog,sSocialDist,eSocialDist,pct=0){
@@ -672,7 +667,7 @@ plot_xy        <- function(sdata,xfeature,yfeature, ftitle,cstate,plotlog,lookah
   sdata$x = sdata[[xfeature]]
   sdata   = sdata[!is.na(sdata$y)&!is.na(sdata$y),]
   overlay = length(cstate)>1
-  if (overlay) {sdata$flegend=sdata$state} else {sdata$flegend = feature}
+  if (overlay) {sdata$flegend=sdata$state} else {sdata$flegend = yfeature}
   sdata   = subset(sdata, grepl(paste(cstate,collapse="|"),state) & !is.na(y) & !is.na(x))
   if (nrow(sdata)==0){return(plot_unavailable())} 
   for (s in cstate){
@@ -692,7 +687,7 @@ plot_xy        <- function(sdata,xfeature,yfeature, ftitle,cstate,plotlog,lookah
 plot_now_summary    <- function(nowdata, focusplot, plotlog, normalize, sfeature, sSocialDist, eSocialDist, nStates = 40, lookahead = NA ){
   #plot ranked bar graphs
   nowdata$feature = nowdata[[sfeature]]                       #make the summarized feature accessible.  
-  nowdata         = nowdata[ (nowdata$rdate > ( Sys.Date() - 8 ) ) & ( nowdata$rdate < Sys.Date() ), ] # limiit to last week
+  nowdata         = nowdata[ (nowdata$rdate > ( endDate - 8 ) ) & ( nowdata$rdate < endDate ), ] # limiit to last week
   nowdata         = nowdata[!is.na(nowdata$feature),]         # limit to non-NA values
   if (sum(grepl("France",nowdata$state))>0){nowdata = nowdata[( (nowdata$positive > caseRankThreshold) & (nowdata$death > deathRankThreshold)),]}
   ispct = is_pct_axis(sfeature,focusplot)                    
@@ -756,7 +751,7 @@ plot_trend  <- function(p,pdata,estate,plotlog,totFeature,increaseFeature,fracFe
   
   if (!overlay){pdata$flegend    = flegend} else { pdata$flegend    = pdata$state}
   if (forecastOK) {if (!overlay){forecast$flegend = flegend} else {forecast$flegend = forecast$state}
-    if ( overlay){forecast         = forecast[forecast$rdate>=(Sys.Date()-3),]}
+    if ( overlay){forecast         = forecast[forecast$rdate>=(endDate-3),]}
     
     #constrain forecasts to not exceed population to avoid blowing up graphs
     if (normalize){forecast$tot[forecast$tot>1e6]=NA
@@ -960,6 +955,7 @@ generate_plot <- function(focusplot,input,data,plotlog,lookahead,sSocialDist,eSo
   if (overlay & (inputfeature == "All"))   {return(plot_unavailable("for 'all' aspects for 2+ regions"))}
   if ((input$aspect == "CFR etc") & (inputfeature=="All"))   {return(plot_unavailable("for 'all' except daily/total"))}
   data = data[data$rdate >= input$startd,]
+  data = data[data$rdate <= input$endd,]
   
   daily=FALSE
   showhosp = 0
@@ -1218,93 +1214,20 @@ server <- function(input, output, session){
   
   output$downloadData <- downloadHandler(
     filename = function() {
-      paste("data-", Sys.Date(), ".csv", sep="")
+      paste("data-", endDate, ".csv", sep="")
     },
     content = function(file) {
       write.csv(exportdata(), file)
     }
   )
   
-  output$Plot0 <- renderPlotly({
-    p <- generate_plot(identify_plot(input),input,data,plotlog,lookahead,sSocialDist,eSocialDist,54)
-    p <- config(ggplotly(p),  displaylogo = FALSE)
+  output$Plot0 <- renderPlot({
+    p <- generate_plot(identify_plot(input), input, allData, 0, 0, endDate - distwindow, endDate, 54)
     return(p)
-  }
-  )
+  })
   
-  output$plot.ui <- renderUI({  plotlyOutput("Plot0", height=plotHeight)})
+  output$plot.ui <- renderUI({  plotOutput("Plot0", height=plotHeight)})
   
-  rfingUS= reactiveVal(FALSE)
-  rfingWorld= reactiveVal(FALSE)
-  
-  output$refreshTextUS= renderText(if (rfingUS()){"refreshing"}else{
-    paste("Refresh US (",
-          round(as.Date(Sys.Date())-max(as.Date(amerData$rdate),na.rm=TRUE)-1,0),
-          "d)"       )})
-  
-  output$refreshTextWorld= renderText(if (rfingWorld()){"refreshing"}else{
-    paste("Refresh World (",
-          round(as.Date(Sys.Date())-max(as.Date(worldData$rdate),na.rm=TRUE)-1,0),
-          "d)"
-    )})
-  
-  observeEvent(input$refreshUS,{
-    withProgress(message="refreshing", expr={
-      echomsg(0.1,"getting US data") 
-      echomsg(0.05,"refreshing")
-      rfingUS(TRUE)
-      echomsg(0.05,Sys.time())
-      refresh=TRUE
-      forceRefresh=TRUE
-      amerData     <<- get_amer_data(refresh|forceRefresh)
-      echomsg(0.1,"aggregating")
-      USStateData         <<- region_aggregate( amerData[ grepl( paste(electoralAll,  collapse="|"), amerData$state), ],  "US States") #doesn't sum states without final entries. has hospitalization data
-      deepBlueStateData   <<- region_aggregate( amerData[ grepl( paste(deepBlueState, collapse="|"), amerData$state), ],  "Deep Blue State")
-      deepRedStateData    <<- region_aggregate( amerData[ grepl( paste(deepRedState,  collapse="|"), amerData$state), ],  "Deep _Red State")
-      world        = region_aggregate(worldData,"World")
-      echomsg(0.1,"saving") 
-      allData      <<- rbind(amerData,worldData,world,deepBlueStateData,deepRedStateData,USStateData)
-      save(amerData,worldData,allData,world,deepBlueStateData,deepRedStateData,USStateData, file = "alldata.RData")
-      
-      put_object(
-        file = "alldata.RData", 
-        object = "alldata.RData", 
-        bucket = "appjackpriororg")
-      
-      echomsg(0.05,"saved")
-      echomsg(0.05,Sys.time())
-      rfingUS(FALSE)
-    })},ignoreNULL=TRUE)
-  
-  observeEvent(input$refreshWorld,{
-    echomsg(0.05,"refreshing")
-    rfingWorld(TRUE)
-    echomsg(0.05,Sys.time())
-    refresh=TRUE
-    forceRefresh=TRUE
-    
-    withProgress(message="refreshing", expr={
-      echomsg(0.1,"getting world data") 
-      gc()
-      worldData    <<- get_world_data(refresh|forceRefresh)
-      worldData    <<- rbind(worldData,USStateData)
-      #echomsg(0.1,"aggregating")
-      #world        <<- region_aggregate(worldData,"World")
-      echomsg(0.1,"saving") 
-      #allData      <<- rbind(amerData,worldData,world,deepBlueStateData,deepRedStateData)
-      allData      <<- rbind(amerData,worldData,deepBlueStateData,deepRedStateData)
-      gc()
-      #save(amerData,worldData,allData,world,deepBlueStateData,deepRedStateData,USStateData, file = "alldata.RData")
-      save(amerData,worldData,allData,deepBlueStateData,deepRedStateData,USStateData, file = "alldata.RData")
-      echomsg(0.1,"saved to cache")
-      put_object(
-        file = "alldata.RData", 
-        object = "alldata.RData", 
-        bucket = "appjackpriororg")
-      echomsg(0.05,"saved to aws")
-      echomsg(0.05,Sys.time())
-      rfingWorld(FALSE)})
-  },ignoreNULL=TRUE)
   
 }
 
@@ -1332,7 +1255,7 @@ ui     <- function(request){
                                    c("Oceania"),
                                    c("All Countries")))}
   fluidPage(
-    titlePanel("Covid-19 Data & Forecasts"),
+    titlePanel(paste0("Covid-19 Historical Data & Analysis (2020\u2013", format(endDate, "%b %Y"), ")")),
     sidebarLayout(
       sidebarPanel(
         bookmarkButton(label="Share",inline=TRUE),
@@ -1365,13 +1288,11 @@ ui     <- function(request){
         
         #checkboxGroupInput('options',"Options",choices=c("LogY"="log","/mil"="normalize","15Mar-"="march1"),selected=c("log","normalize","march1"), inline=TRUE),
         checkboxGroupInput('options',"Options",choices=c("LogY"="log","/mil"="normalize"),selected=c("log","normalize"), inline=TRUE),
-        sliderInput("startd", "Start Plots at?",                  min = ymd("20200101"), max = Sys.Date()-30, value = ymd("20211115"), round=TRUE),
-        sliderInput("look", "Forecast Horizon?",         min = Sys.Date()+7, max = Sys.Date()+maxforecastdays,    value = floor_date(Sys.Date()+defaultforecastdays,"month"),round=TRUE, dragRange=FALSE),
-        #sliderInput("sdw",  "What Data for Model",       min = ymd("20200301"), max = Sys.Date()            , value = c(as.Date(as.Date(Sys.Date()-distwindow)),as.Date(Sys.Date()))-2,round=TRUE, dragRange=FALSE),
-        sliderInput("sdw",  "What Data for Model",       min = today()-60, max = Sys.Date()            , value = c(as.Date(as.Date(Sys.Date()-distwindow)),as.Date(Sys.Date()))-1,round=TRUE, dragRange=FALSE),
-        actionButton("refreshUS",textOutput("refreshTextUS")),
-        actionButton("refreshWorld",textOutput("refreshTextWorld"))
-        
+        sliderInput("endd",   "End Data at?",        min = ymd("20200101"), max = endDate,                   value = endDate,                                    round = TRUE),
+        sliderInput("startd", "Start Plots at?",     min = ymd("20200101"), max = endDate - 30,              value = ymd("20200101"),                             round = TRUE),
+        sliderInput("look",   "Forecast Horizon?",   min = ymd("20200101"), max = endDate + maxforecastdays, value = endDate + defaultforecastdays,               round = TRUE, dragRange = FALSE),
+        sliderInput("sdw",    "What Data for Model", min = ymd("20200101"), max = endDate,                   value = c(as.Date(endDate - distwindow), as.Date(endDate)) - 2, round = TRUE, dragRange = FALSE)
+
       ),
       mainPanel(  uiOutput("plot.ui"),
                   downloadButton("downloadData", "Download")
@@ -1380,32 +1301,21 @@ ui     <- function(request){
 
 #Launch Program----------------------------------
 stime1 = as.POSIXct(Sys.time())
-refresh=TRUE
 Sys.setenv(TZ='America/New_York')
 
-try(save_object(object = "s3://appjackpriororg/alldata.RData", file = "alldata.RData"))
+# Data is bundled in the repo as alldata.RData — no network or AWS needed.
+load("alldata.RData")
 
-try({load("alldata.RData" )
-  refresh = FALSE
-  if (max(amerData$rdate)<(Sys.Date()-maxAge)) {refresh=TRUE}
-})
-
-if (refresh|forceRefresh) {
-  amerData     = get_amer_data(refresh|forceRefresh)
-  worldData    = get_world_data(refresh|forceRefresh)
-  USStateData           = region_aggregate( amerData[ grepl( paste(electoralAll,  collapse="|"), amerData$state), ],  "US States") #doesn't sum states without final entries. has hospitalization data
-  deepBlueStateData     = region_aggregate( amerData[ grepl( paste(deepBlueState, collapse="|"), amerData$state), ],  "Deep Blue State")
-  deepRedStateData      = region_aggregate( amerData[ grepl( paste(deepRedState,  collapse="|"), amerData$state), ],  "Deep _Red State")
-  worldData    = rbind(worldData,USStateData)
-  world        = region_aggregate(worldData,"World")
-  allData      = rbind(amerData,worldData,world,deepBlueStateData,deepRedStateData)
-  save(amerData,worldData,allData, file = "alldata.RData")
-
-put_object(
-  file = "alldata.RData", 
-  object = "alldata.RData", 
-  bucket = "appjackpriororg"
-)}
+# Derive endDate from actual data, then recompute mday across all frames so growth
+# models have a consistent reference point anchored to the last data date.
+endDate = max(allData$rdate, na.rm = TRUE)
+fix_mday = function(x) { x$mday = as.numeric(difftime(x$rdate, endDate, units = "days")); x }
+amerData  = fix_mday(amerData)
+worldData = fix_mday(worldData)
+allData   = fix_mday(allData)
+if (exists("USStateData"))       USStateData       = fix_mday(USStateData)
+if (exists("deepBlueStateData")) deepBlueStateData = fix_mday(deepBlueStateData)
+if (exists("deepRedStateData"))  deepRedStateData  = fix_mday(deepRedStateData)
 
 
 
